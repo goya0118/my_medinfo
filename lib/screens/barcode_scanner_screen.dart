@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter_spinkit/flutter_spinkit.dart';
 import 'package:fluttertoast/fluttertoast.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../services/drug_api_service.dart';
 import '../models/drug_info.dart';
+// 위에서 만든 CameraManager를 import
+import '../services/camera_manager.dart'; // 파일 경로에 맞게 수정하세요
 
 class BarcodeScannerScreen extends StatefulWidget {
   const BarcodeScannerScreen({super.key});
@@ -14,7 +16,9 @@ class BarcodeScannerScreen extends StatefulWidget {
 }
 
 class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
-  MobileScannerController? _controller;
+  // CameraManager 사용
+  final CameraManager _cameraManager = CameraManager();
+  
   bool _isScanning = true;
   bool _isLoading = false;
   bool _cameraInitialized = false;
@@ -29,65 +33,70 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
   @override
   void initState() {
     super.initState();
-    _requestCameraPermission();
+    _initializeCamera(); // 수정된 초기화 함수 호출
   }
 
   @override
   void dispose() {
-    _controller?.dispose();
+    _cameraManager.dispose(); // CameraManager의 dispose 사용
     super.dispose();
   }
 
-  Future<void> _requestCameraPermission() async {
-    try {
-      final status = await Permission.camera.request();
-      if (status.isGranted) {
-        await _initializeScanner();
-      } else {
-        _showPermissionDialog();
-      }
-    } catch (e) {
-      print('권한 요청 오류: $e');
-      setState(() {
-        _errorMessage = '카메라 권한을 확인할 수 없습니다.';
-      });
-    }
-  }
+  // 수정된 카메라 초기화 함수 (더 간단하게)
+  Future<void> _initializeCamera() async {
+    setState(() {
+      _cameraInitialized = false;
+      _errorMessage = null;
+    });
 
-  Future<void> _initializeScanner() async {
     try {
-      _controller = MobileScannerController(
-        detectionSpeed: DetectionSpeed.noDuplicates,
-        facing: CameraFacing.back,
-        torchEnabled: false,
-      );
+      // 먼저 MobileScanner가 직접 처리하도록 시도
+      final result = await _cameraManager.initializeCamera();
       
-      // 컨트롤러 시작 대기
-      await Future.delayed(const Duration(milliseconds: 1000));
-      
-      if (mounted) {
+      if (!mounted) return;
+
+      if (result.isSuccess) {
+        // 성공
         setState(() {
           _cameraInitialized = true;
           _errorMessage = null;
         });
+      } else {
+        // 실패시 권한 상태 재확인
+        final permissionStatus = await _cameraManager.checkPermissionStatus();
+        print('실제 권한 상태: $permissionStatus');
+        
+        if (permissionStatus == PermissionStatus.permanentlyDenied) {
+          setState(() {
+            _errorMessage = '설정에서 카메라 권한을 허용해주세요';
+          });
+          _showSettingsDialog();
+        } else if (permissionStatus == PermissionStatus.denied) {
+          setState(() {
+            _errorMessage = '카메라 권한이 필요합니다';
+          });
+          _showPermissionDialog();
+        } else if (permissionStatus == PermissionStatus.granted || permissionStatus == PermissionStatus.limited) {
+          // 권한은 있는데 카메라 초기화 실패
+          setState(() {
+            _errorMessage = result.getUserMessage();
+          });
+        } else {
+          setState(() {
+            _errorMessage = result.getUserMessage();
+          });
+        }
       }
     } catch (e) {
-      print('카메라 초기화 실패: $e');
       if (mounted) {
         setState(() {
-          _errorMessage = '카메라 초기화에 실패했습니다.';
+          _errorMessage = '카메라 초기화 중 오류가 발생했습니다: $e';
         });
-        
-        Fluttertoast.showToast(
-          msg: "카메라 초기화에 실패했습니다",
-          backgroundColor: Colors.red,
-          textColor: Colors.white,
-          gravity: ToastGravity.CENTER,
-        );
       }
     }
   }
 
+  // 권한 요청 다이얼로그 (수정)
   void _showPermissionDialog() {
     showDialog(
       context: context,
@@ -100,9 +109,47 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
             child: const Text('취소'),
           ),
           TextButton(
-            onPressed: () {
+            onPressed: () async {
               Navigator.pop(context);
-              openAppSettings();
+              // 권한 요청 후 다시 카메라 초기화
+              final granted = await _cameraManager.requestPermission();
+              if (granted) {
+                _initializeCamera();
+              } else {
+                setState(() {
+                  _errorMessage = '카메라 권한이 거부되었습니다';
+                });
+              }
+            },
+            child: const Text('권한 허용'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 설정으로 이동 다이얼로그
+  void _showSettingsDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('권한 설정 필요'),
+        content: const Text('설정에서 카메라 권한을 허용해주세요.\n\n설정 > 개인정보 보호 및 보안 > 카메라'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('취소'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              await _cameraManager.openAppSettings();
+              // 설정에서 돌아온 후 카메라 재초기화
+              Future.delayed(const Duration(seconds: 1), () {
+                if (mounted) {
+                  _initializeCamera();
+                }
+              });
             },
             child: const Text('설정으로 이동'),
           ),
@@ -239,25 +286,11 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
   }
 
   void _toggleFlash() {
-    try {
-      _controller?.toggleTorch();
-    } catch (e) {
-      print('플래시 토글 오류: $e');
-    }
+    _cameraManager.toggleFlash(); // CameraManager의 toggleFlash 사용
   }
 
   void _restartCamera() async {
-    setState(() {
-      _cameraInitialized = false;
-      _errorMessage = null;
-    });
-    
-    try {
-      _controller?.dispose();
-      await _initializeScanner();
-    } catch (e) {
-      print('카메라 재시작 오류: $e');
-    }
+    await _initializeCamera(); // 수정된 초기화 함수 사용
   }
 
   @override
@@ -277,7 +310,7 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
           ),
         ],
       ),
-      body: SafeArea( // SafeArea 추가로 오버플로우 방지
+      body: SafeArea(
         child: Column(
           children: [
             // 카메라 스캐너
@@ -295,9 +328,9 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
                   child: Stack(
                     children: [
                       // 카메라 뷰
-                      if (_controller != null && _cameraInitialized)
+                      if (_cameraManager.controller != null && _cameraInitialized)
                         MobileScanner(
-                          controller: _controller!,
+                          controller: _cameraManager.controller!,
                           onDetect: _onBarcodeDetect,
                         )
                       else
@@ -392,11 +425,11 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
             // 상태 및 결과 표시
             Expanded(
               flex: 2,
-              child: SingleChildScrollView( // 스크롤 추가로 오버플로우 방지
+              child: SingleChildScrollView(
                 child: Padding(
                   padding: const EdgeInsets.all(16),
                   child: Column(
-                    mainAxisSize: MainAxisSize.min, // 최소 크기 사용
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       // 상태 메시지
                       Container(
