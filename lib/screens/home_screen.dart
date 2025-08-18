@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'barcode_scanner_screen.dart';
+import 'medication_log_screen.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -125,9 +126,12 @@ class HomeScreen extends StatelessWidget {
                 height: 60,
                 child: ElevatedButton.icon(
                   onPressed: () {
-                    // 복약 기록 페이지로 이동
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('복약 기록 기능 준비 중입니다')),
+                    // 복약 기록 페이지로 이동해요
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const MedicationLogScreen(),
+                      ),
                     );
                   },
                   icon: const Icon(

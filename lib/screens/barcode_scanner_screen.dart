@@ -7,6 +7,7 @@ import '../services/drug_api_service.dart';
 import '../models/drug_info.dart';
 import '../services/camera_manager.dart';
 import 'drug_info_screen.dart'; // 새로 만든 의약품 정보 화면
+import '../services/medication_log_service.dart';
 
 class BarcodeScannerScreen extends StatefulWidget {
   const BarcodeScannerScreen({super.key});
@@ -276,6 +277,83 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
     await _initializeCamera();
   }
 
+  // 복용 기록 다이얼로그 (수량만 선택)
+  void _showMedicationLogDialog() {
+    if (_drugInfo == null || _lastScannedBarcode == null) return;
+
+    int selectedQuantity = 1; // 기본 1정
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('복용 기록 추가'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '약품: ${_drugInfo!.itemName}',
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 16),
+              const Text('복용 수량:'),
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  IconButton(
+                    onPressed: () {
+                      if (selectedQuantity > 1) setState(() => selectedQuantity--);
+                    },
+                    icon: const Icon(Icons.remove_circle_outline),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade100,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text('$selectedQuantity정', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  ),
+                  IconButton(
+                    onPressed: () => setState(() => selectedQuantity++),
+                    icon: const Icon(Icons.add_circle_outline),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('취소'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                final success = await MedicationLogService.saveMedicationLog(
+                  drugName: _drugInfo!.itemName,
+                  takenAt: DateTime.now(),
+                  quantity: selectedQuantity,
+                );
+                Navigator.of(context).pop();
+                Fluttertoast.showToast(
+                  msg: success ? '복용 기록이 저장되었습니다!' : '복용 기록 저장에 실패했습니다',
+                  toastLength: Toast.LENGTH_SHORT,
+                  gravity: ToastGravity.CENTER,
+                  backgroundColor: success ? Colors.green : Colors.red,
+                  textColor: Colors.white,
+                );
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+              child: const Text('저장', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -501,6 +579,32 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
                                 style: const TextStyle(
                                   fontSize: 12,
                                   color: Colors.grey,
+                                ),
+                              ),
+                              
+                              const SizedBox(height: 16),
+                              
+                              // 복용 기록 버튼
+                              SizedBox(
+                                width: double.infinity,
+                                height: 50,
+                                child: ElevatedButton.icon(
+                                  onPressed: () => _showMedicationLogDialog(),
+                                  icon: const Icon(Icons.add_circle_outline),
+                                  label: const Text(
+                                    '복용 기록 추가',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.green,
+                                    foregroundColor: Colors.white,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
                                 ),
                               ),
                             ],
