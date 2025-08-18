@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // 진동을 위한 HapticFeedback
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:flutter_spinkit/flutter_spinkit.dart';
 import 'package:fluttertoast/fluttertoast.dart';
-import 'package:permission_handler/permission_handler.dart';
 import '../services/drug_api_service.dart';
 import '../models/drug_info.dart';
-// 위에서 만든 CameraManager를 import
-import '../services/camera_manager.dart'; // 파일 경로에 맞게 수정하세요
+import '../services/camera_manager.dart';
+import 'drug_info_screen.dart'; // 새로 만든 의약품 정보 화면
 
 class BarcodeScannerScreen extends StatefulWidget {
   const BarcodeScannerScreen({super.key});
@@ -16,7 +16,6 @@ class BarcodeScannerScreen extends StatefulWidget {
 }
 
 class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
-  // CameraManager 사용
   final CameraManager _cameraManager = CameraManager();
   
   bool _isScanning = true;
@@ -27,22 +26,51 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
   DrugInfo? _drugInfo;
   String? _errorMessage;
   
-  // 중복 스캔 방지 (3초 쿨다운)
+  // 진동 관련 변수 추가
+  bool _isVibrating = false;
+  
   static const Duration _scanCooldown = Duration(seconds: 3);
 
   @override
   void initState() {
     super.initState();
-    _initializeCamera(); // 수정된 초기화 함수 호출
+    _initializeCamera();
   }
 
   @override
   void dispose() {
-    _cameraManager.dispose(); // CameraManager의 dispose 사용
+    _stopVibration(); // 진동 중지
+    _cameraManager.dispose();
     super.dispose();
   }
 
-  // 수정된 카메라 초기화 함수 (더 간단하게)
+  // 진동 관련 메서드들 추가
+  void _startScanningVibration() {
+    if (_isVibrating) return;
+    
+    _isVibrating = true;
+    _vibrationLoop();
+  }
+
+  void _vibrationLoop() async {
+    while (_isVibrating && _isScanning && mounted) {
+      await Future.delayed(const Duration(milliseconds: 1000)); // 1.5초마다
+      if (_isVibrating && _isScanning && mounted) {
+        HapticFeedback.lightImpact(); // 약한 진동
+      }
+    }
+  }
+
+  void _stopVibration() {
+    _isVibrating = false;
+  }
+
+  void _superSuccessVibration() async {
+    HapticFeedback.heavyImpact();
+    await Future.delayed(const Duration(milliseconds: 100));
+    HapticFeedback.heavyImpact(); // 연속 2번
+  }
+
   Future<void> _initializeCamera() async {
     setState(() {
       _cameraInitialized = false;
@@ -50,41 +78,24 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
     });
 
     try {
-      // 먼저 MobileScanner가 직접 처리하도록 시도
       final result = await _cameraManager.initializeCamera();
       
       if (!mounted) return;
 
       if (result.isSuccess) {
-        // 성공
         setState(() {
           _cameraInitialized = true;
           _errorMessage = null;
         });
+        // 카메라 초기화 성공 시 진동 시작
+        _startScanningVibration();
       } else {
-        // 실패시 권한 상태 재확인
-        final permissionStatus = await _cameraManager.checkPermissionStatus();
-        print('실제 권한 상태: $permissionStatus');
+        setState(() {
+          _errorMessage = result.getUserMessage();
+        });
         
-        if (permissionStatus == PermissionStatus.permanentlyDenied) {
-          setState(() {
-            _errorMessage = '설정에서 카메라 권한을 허용해주세요';
-          });
-          _showSettingsDialog();
-        } else if (permissionStatus == PermissionStatus.denied) {
-          setState(() {
-            _errorMessage = '카메라 권한이 필요합니다';
-          });
+        if (result.isPermissionDenied) {
           _showPermissionDialog();
-        } else if (permissionStatus == PermissionStatus.granted || permissionStatus == PermissionStatus.limited) {
-          // 권한은 있는데 카메라 초기화 실패
-          setState(() {
-            _errorMessage = result.getUserMessage();
-          });
-        } else {
-          setState(() {
-            _errorMessage = result.getUserMessage();
-          });
         }
       }
     } catch (e) {
@@ -96,62 +107,23 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
     }
   }
 
-  // 권한 요청 다이얼로그 (수정)
   void _showPermissionDialog() {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('카메라 권한 필요'),
-        content: const Text('바코드 스캔을 위해 카메라 권한이 필요합니다.'),
+        content: const Text('바코드 스캔을 위해 카메라 권한이 필요합니다.\n\n설정 > 개인정보 보호 및 보안 > 카메라에서 이 앱의 권한을 허용해주세요.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('취소'),
           ),
           TextButton(
-            onPressed: () async {
+            onPressed: () {
               Navigator.pop(context);
-              // 권한 요청 후 다시 카메라 초기화
-              final granted = await _cameraManager.requestPermission();
-              if (granted) {
-                _initializeCamera();
-              } else {
-                setState(() {
-                  _errorMessage = '카메라 권한이 거부되었습니다';
-                });
-              }
+              _initializeCamera();
             },
-            child: const Text('권한 허용'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // 설정으로 이동 다이얼로그
-  void _showSettingsDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('권한 설정 필요'),
-        content: const Text('설정에서 카메라 권한을 허용해주세요.\n\n설정 > 개인정보 보호 및 보안 > 카메라'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('취소'),
-          ),
-          TextButton(
-            onPressed: () async {
-              Navigator.pop(context);
-              await _cameraManager.openAppSettings();
-              // 설정에서 돌아온 후 카메라 재초기화
-              Future.delayed(const Duration(seconds: 1), () {
-                if (mounted) {
-                  _initializeCamera();
-                }
-              });
-            },
-            child: const Text('설정으로 이동'),
+            child: const Text('다시 시도'),
           ),
         ],
       ),
@@ -160,10 +132,8 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
 
   void _onBarcodeDetect(BarcodeCapture capture) async {
     try {
-      // 스캔 중지 상태면 무시
       if (!_isScanning || !mounted) return;
 
-      // 바코드 데이터 안전하게 추출
       if (capture.barcodes.isEmpty) return;
       
       final barcode = capture.barcodes.first;
@@ -171,7 +141,6 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
       
       if (code == null || code.isEmpty) return;
 
-      // 중복 스캔 방지
       final now = DateTime.now();
       if (_lastScannedBarcode == code && 
           _lastScanTime != null && 
@@ -184,7 +153,10 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
 
       print('바코드 스캔됨: $code');
 
-      // 스캔 일시 중지
+      // 성공 진동
+      _superSuccessVibration();
+      _stopVibration(); // 스캔 중 진동 중지
+
       if (mounted) {
         setState(() {
           _isScanning = false;
@@ -194,7 +166,6 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
         });
       }
 
-      // 의약품 정보 조회
       await _fetchDrugInfo(code);
       
     } catch (e) {
@@ -205,12 +176,12 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
           _errorMessage = '바코드 처리 중 오류가 발생했습니다.';
         });
         
-        // 오류 시에도 스캔 재시작
         Future.delayed(const Duration(seconds: 2), () {
           if (mounted) {
             setState(() {
               _isScanning = true;
             });
+            _startScanningVibration(); // 진동 재시작
           }
         });
       }
@@ -229,13 +200,24 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
         });
 
         if (drugInfo != null) {
-          Fluttertoast.showToast(
-            msg: "의약품 정보를 찾았습니다!",
-            toastLength: Toast.LENGTH_SHORT,
-            gravity: ToastGravity.CENTER,
-            backgroundColor: Colors.green,
-            textColor: Colors.white,
-          );
+          // 성공시 새 화면으로 이동
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => DrugInfoScreen(
+                drugInfo: drugInfo,
+                barcode: barcode,
+              ),
+            ),
+          ).then((_) {
+            // 화면에서 돌아왔을 때 스캔 재시작
+            if (mounted) {
+              setState(() {
+                _isScanning = true;
+              });
+              _startScanningVibration(); // 진동 재시작
+            }
+          });
         } else {
           Fluttertoast.showToast(
             msg: "의약품 정보를 찾을 수 없습니다",
@@ -244,16 +226,17 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
             backgroundColor: Colors.orange,
             textColor: Colors.white,
           );
+          
+          // 정보를 찾지 못한 경우 3초 후 스캔 재시작
+          Future.delayed(const Duration(seconds: 3), () {
+            if (mounted) {
+              setState(() {
+                _isScanning = true;
+              });
+              _startScanningVibration(); // 진동 재시작
+            }
+          });
         }
-
-        // 3초 후 스캔 재시작
-        Future.delayed(const Duration(seconds: 3), () {
-          if (mounted) {
-            setState(() {
-              _isScanning = true;
-            });
-          }
-        });
       }
 
     } catch (e) {
@@ -273,12 +256,12 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
           textColor: Colors.white,
         );
 
-        // 오류 시에도 스캔 재시작
         Future.delayed(const Duration(seconds: 2), () {
           if (mounted) {
             setState(() {
               _isScanning = true;
             });
+            _startScanningVibration(); // 진동 재시작
           }
         });
       }
@@ -286,11 +269,11 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
   }
 
   void _toggleFlash() {
-    _cameraManager.toggleFlash(); // CameraManager의 toggleFlash 사용
+    _cameraManager.toggleFlash();
   }
 
   void _restartCamera() async {
-    await _initializeCamera(); // 수정된 초기화 함수 사용
+    await _initializeCamera();
   }
 
   @override
@@ -376,7 +359,7 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
                           ),
                         ),
                       
-                      // 스캔 가이드 (카메라가 초기화된 경우에만 표시)
+                      // 스캔 가이드
                       if (_cameraInitialized)
                         Center(
                           child: Container(
