@@ -7,6 +7,7 @@ import '../services/drug_api_service.dart';
 import '../models/drug_info.dart';
 import '../services/camera_manager.dart';
 import 'drug_info_screen.dart';
+import 'drug_detail_screen.dart'; // DrugInfoScreen 대신 DrugDetailScreen을 import
 
 class BarcodeScannerScreen extends StatefulWidget {
   const BarcodeScannerScreen({super.key});
@@ -26,7 +27,7 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
   DrugInfo? _drugInfo;
   String? _errorMessage;
   
-  // 진동 관련
+
   bool _isVibrating = false;
   
   static const Duration _scanCooldown = Duration(seconds: 3);
@@ -44,7 +45,7 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
     super.dispose();
   }
 
-  // 진동 관련 메서드들
+
   void _startScanningVibration() {
     if (_isVibrating) return;
     _isVibrating = true;
@@ -53,7 +54,7 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
 
   void _vibrationLoop() async {
     while (_isVibrating && _isScanning && mounted) {
-      await Future.delayed(const Duration(milliseconds: 1500));
+      await Future.delayed(const Duration(milliseconds: 1000));
       if (_isVibrating && _isScanning && mounted) {
         HapticFeedback.lightImpact();
       }
@@ -85,7 +86,7 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
           _cameraInitialized = true;
           _errorMessage = null;
         });
-        
+
         _startScanningVibration();
         
         // 통합 인식 시작 (바코드 + 알약)
@@ -199,13 +200,17 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
         });
 
         if (drugInfo != null) {
-          // 성공시 새 화면으로 이동
+          // --- 2. 여기를 수정했습니다 ---
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (context) => DrugInfoScreen(
-                drugInfo: drugInfo,
-                barcode: barcode,
+              // 이동할 화면을 DrugDetailScreen으로 변경
+              builder: (context) => DrugDetailScreen( 
+                drugInfo: drugInfo, // ✅ 스캔해서 얻은 의약품 정보를 전달
+                barcode: barcode,   // ✅ 스캔한 바코드 번호를 전달
+                //drugInfo: drugInfo,
+                //atcCode: drugInfo.atcCode!,   // 기존 drugInfo에서 가져온 ATC 코드
+                //engName: drugInfo.engName!,   // 기존 drugInfo에서 가져온 영문명
               ),
             ),
           ).then((_) {
@@ -299,6 +304,7 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // ... (이하 UI 코드는 동일하여 생략)
     return Scaffold(
       appBar: AppBar(
         title: const Text('🏥 스마트 의약품 스캐너'),

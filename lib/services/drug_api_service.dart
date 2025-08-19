@@ -94,7 +94,29 @@ class DrugApiService {
       return null;
     }
   }
+  static Future<Map<String, dynamic>?> getDrugDetailJson(String barcode) async {
+    print("상세 정보 API 호출 시작 (가상): $barcode");
 
+    // 2초간의 가상 네트워크 지연 시간
+    await Future.delayed(const Duration(seconds: 2));
+
+    // UI 테스트를 위한 가짜 JSON 데이터를 반환합니다.
+    // TODO: 향후 실제 API가 준비되면 이 부분을 실제 네트워크 요청 코드로 교체해야 합니다.
+    final mockJsonData = {
+      "summary": {
+        "efficacy": "이 약은 두통, 치통, 생리통 등 다양한 통증 완화에 효과가 있습니다. 또한 감기로 인한 발열 증상을 완화하는 데 사용됩니다.",
+        "dosage": "성인 기준 1회 1~2정, 1일 3~4회 복용할 수 있습니다. 복용 간격은 최소 4시간 이상으로 유지해야 합니다.",
+        "contraindications": {
+          "who_should_not_take": "이 약의 성분에 과민반응이 있는 환자, 소화성 궤양 환자, 심한 혈액 이상 환자는 복용해서는 안 됩니다.",
+          "medications_to_avoid": "다른 비스테로이드성 소염진통제(NSAIDs)와 함께 복용하지 마세요. 와파린 등 항응고제를 복용 중인 경우 의사와 상담이 필요합니다."
+        }
+      }
+    };
+    
+    print("상세 정보 API 응답 (가상)");
+    return mockJsonData;
+  }
+  
   static Future<DrugInfo?> _tryApiCall(
     String endpoint, 
     String paramName, 
@@ -248,9 +270,13 @@ class DrugApiService {
     // 모든 가능한 키 이름들을 확인
     final itemNameKeys = ['ITEM_NAME', 'itemName', 'item_name', 'name', 'productName'];
     final companyKeys = ['ENTP_NAME', 'entpName', 'entp_name', 'company', 'manufacturer'];
-    
+    final engNameKeys = ['ITEM_ENG_NAME', 'itemEngName', 'eng_name', 'englishName']; // ✅ 영문명 후보 키 추가
+    final atcCodeKeys = ['ATC_CODE', 'atcCode', 'atc_code']; // ✅ ATC 코드 키 후보 추가
+
     String itemName = '알 수 없는 의약품';
     String company = '';
+    String? atcCode; // nullable로 선언
+    String? engName;
     
     // 아이템 이름 찾기
     for (final key in itemNameKeys) {
@@ -268,13 +294,32 @@ class DrugApiService {
       }
     }
     
-    print('생성된 DrugInfo - 이름: $itemName, 회사: $company');
-    
+    // ATC 코드 찾기
+    for (final key in atcCodeKeys) {
+      if (item[key] != null && item[key].toString().trim().isNotEmpty) {
+        atcCode = item[key].toString().trim();
+        break;
+      }
+    }
+
+    // ✅ 영문명 찾기
+    for (final key in engNameKeys) {
+      if (item[key] != null && item[key].toString().trim().isNotEmpty) {
+        engName = item[key].toString().trim();
+        break;
+      }
+    }
+
+    //print('생성된 DrugInfo - 이름: $itemName, 회사: $company');
+    print('생성된 DrugInfo - 이름: $itemName, 회사: $company, ATC: $atcCode, 영문명: $engName');
+
     return DrugInfo(
       itemName: itemName,
       company: company,
       barcode: barcode,
       queriedAt: DateTime.now(),
+      atcCode: atcCode, // ✅ 누락된 부분 추가
+      engName: engName, // ✅ 추가
     );
   }
 
