@@ -51,6 +51,21 @@ class DrugInfoWidget extends StatelessWidget {
             ),
           ),
           
+          // --- 여기를 수정했습니다 ---
+          if (drugInfo.engName?.isNotEmpty ?? false) ...[
+            const SizedBox(height: 4),
+            Text(
+              // engName이 null일 경우 빈 문자열('')을 표시하도록 변경
+              drugInfo.engName ?? '',
+              style: const TextStyle(
+                fontSize: 14,
+                fontStyle: FontStyle.italic,
+                color: Colors.black87,
+              ),
+            ),
+          ],
+          // --- 수정 끝 ---
+          
           if (drugInfo.company.isNotEmpty) ...[
             const SizedBox(height: 8),
             Text(

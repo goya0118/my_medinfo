@@ -6,7 +6,8 @@ import 'package:fluttertoast/fluttertoast.dart';
 import '../services/drug_api_service.dart';
 import '../models/drug_info.dart';
 import '../services/camera_manager.dart';
-import 'drug_info_screen.dart'; // 새로 만든 의약품 정보 화면
+// --- 1. 여기를 수정했습니다 ---
+import 'drug_detail_screen.dart'; // DrugInfoScreen 대신 DrugDetailScreen을 import
 
 class BarcodeScannerScreen extends StatefulWidget {
   const BarcodeScannerScreen({super.key});
@@ -26,7 +27,6 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
   DrugInfo? _drugInfo;
   String? _errorMessage;
   
-  // 진동 관련 변수 추가
   bool _isVibrating = false;
   
   static const Duration _scanCooldown = Duration(seconds: 3);
@@ -39,12 +39,11 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
 
   @override
   void dispose() {
-    _stopVibration(); // 진동 중지
+    _stopVibration();
     _cameraManager.dispose();
     super.dispose();
   }
 
-  // 진동 관련 메서드들 추가
   void _startScanningVibration() {
     if (_isVibrating) return;
     
@@ -54,9 +53,9 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
 
   void _vibrationLoop() async {
     while (_isVibrating && _isScanning && mounted) {
-      await Future.delayed(const Duration(milliseconds: 1000)); // 1.5초마다
+      await Future.delayed(const Duration(milliseconds: 1000));
       if (_isVibrating && _isScanning && mounted) {
-        HapticFeedback.lightImpact(); // 약한 진동
+        HapticFeedback.lightImpact();
       }
     }
   }
@@ -68,7 +67,7 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
   void _superSuccessVibration() async {
     HapticFeedback.heavyImpact();
     await Future.delayed(const Duration(milliseconds: 100));
-    HapticFeedback.heavyImpact(); // 연속 2번
+    HapticFeedback.heavyImpact();
   }
 
   Future<void> _initializeCamera() async {
@@ -87,7 +86,6 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
           _cameraInitialized = true;
           _errorMessage = null;
         });
-        // 카메라 초기화 성공 시 진동 시작
         _startScanningVibration();
       } else {
         setState(() {
@@ -153,9 +151,8 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
 
       print('바코드 스캔됨: $code');
 
-      // 성공 진동
       _superSuccessVibration();
-      _stopVibration(); // 스캔 중 진동 중지
+      _stopVibration();
 
       if (mounted) {
         setState(() {
@@ -181,7 +178,7 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
             setState(() {
               _isScanning = true;
             });
-            _startScanningVibration(); // 진동 재시작
+            _startScanningVibration();
           }
         });
       }
@@ -200,13 +197,17 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
         });
 
         if (drugInfo != null) {
-          // 성공시 새 화면으로 이동
+          // --- 2. 여기를 수정했습니다 ---
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (context) => DrugInfoScreen(
-                drugInfo: drugInfo,
-                barcode: barcode,
+              // 이동할 화면을 DrugDetailScreen으로 변경
+              builder: (context) => DrugDetailScreen( 
+                drugInfo: drugInfo, // ✅ 스캔해서 얻은 의약품 정보를 전달
+                barcode: barcode,   // ✅ 스캔한 바코드 번호를 전달
+                //drugInfo: drugInfo,
+                //atcCode: drugInfo.atcCode!,   // 기존 drugInfo에서 가져온 ATC 코드
+                //engName: drugInfo.engName!,   // 기존 drugInfo에서 가져온 영문명
               ),
             ),
           ).then((_) {
@@ -215,7 +216,7 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
               setState(() {
                 _isScanning = true;
               });
-              _startScanningVibration(); // 진동 재시작
+              _startScanningVibration();
             }
           });
         } else {
@@ -227,13 +228,12 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
             textColor: Colors.white,
           );
           
-          // 정보를 찾지 못한 경우 3초 후 스캔 재시작
           Future.delayed(const Duration(seconds: 3), () {
             if (mounted) {
               setState(() {
                 _isScanning = true;
               });
-              _startScanningVibration(); // 진동 재시작
+              _startScanningVibration();
             }
           });
         }
@@ -261,7 +261,7 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
             setState(() {
               _isScanning = true;
             });
-            _startScanningVibration(); // 진동 재시작
+            _startScanningVibration();
           }
         });
       }
@@ -278,6 +278,7 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // ... (이하 UI 코드는 동일하여 생략)
     return Scaffold(
       appBar: AppBar(
         title: const Text('🏥 의약품 바코드 스캐너'),
