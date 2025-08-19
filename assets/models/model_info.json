@@ -1,0 +1,53 @@
+{
+  "framework": "pytorch_mobile",
+  "model_file": "pill_classifier_mobile.pt",
+  "input_height": 224,
+  "input_width": 224,
+  "input_channels": 3,
+  "num_classes": 13,
+  "mean": [
+    0.485,
+    0.456,
+    0.406
+  ],
+  "std": [
+    0.229,
+    0.224,
+    0.225
+  ],
+  "class_names": [
+    "K-000112",
+    "K-004378",
+    "K-004379",
+    "K-010284",
+    "K-012249",
+    "K-013004",
+    "K-013626",
+    "K-014267",
+    "K-019881",
+    "K-020753",
+    "K-026632",
+    "K-029341",
+    "K-030590"
+  ],
+  "input_dtype": "float32",
+  "preprocessing": {
+    "resize": [
+      224,
+      224
+    ],
+    "normalize": {
+      "mean": [
+        0.485,
+        0.456,
+        0.406
+      ],
+      "std": [
+        0.229,
+        0.224,
+        0.225
+      ]
+    },
+    "to_tensor": true
+  }
+}
