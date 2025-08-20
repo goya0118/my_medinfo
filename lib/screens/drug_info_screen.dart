@@ -16,7 +16,6 @@ class DrugInfoScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('💊 의약품 정보'),
-        title: const Text('✅✅✅ 수정된 파일 맞음 ✅✅✅'), // 이렇게 변경!
         backgroundColor: Colors.blue.shade100,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),

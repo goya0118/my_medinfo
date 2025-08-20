@@ -3,7 +3,6 @@
 import 'package:flutter/material.dart';
 import 'config/env_config.dart';
 import 'screens/home_screen.dart';
-import 'services/isar_service.dart';
 
 // main 함수: 앱이 시작될 때 가장 먼저 실행되는 함수예요
 // async는 이 함수가 비동기로 동작한다는 뜻이에요 (데이터를 기다리는 동안 다른 일을 할 수 있어요)
@@ -16,9 +15,6 @@ void main() async {
   // 환경 변수는 앱이 어떤 환경에서 실행되는지 알려주는 정보예요 (예: 개발용, 실제 서비스용)
   await EnvConfig.load();
   
-  // Isar 데이터베이스를 초기화해요
-  // 복약 기록을 저장할 데이터베이스를 준비해요
-  await IsarService.initialize();
   
   // 설정 유효성 검사
   if (!EnvConfig.isConfigValid) {
