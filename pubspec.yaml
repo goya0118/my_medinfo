@@ -56,6 +56,9 @@ dependencies:
 
   speech_to_text: ^7.3.0  # 이 줄을 추가해주세요
 
+  uuid: ^4.4.0 # 이 라인을 추가
+
+
 
 dev_dependencies:
   flutter_test:

@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:uuid/uuid.dart';
 import '../models/drug_info.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
@@ -27,6 +30,9 @@ class _AiChatScreenState extends State<AiChatScreen> {
   final SpeechToText _speechToText = SpeechToText();
   bool _speechEnabled = false;
   bool _isListening = false;
+  
+  // 채팅 화면이 열릴 때마다 고유한 세션 ID를 생성합니다.
+  final String _sessionId = const Uuid().v4();
 
   @override
   void initState() {
@@ -64,20 +70,66 @@ class _AiChatScreenState extends State<AiChatScreen> {
   void _addMessage(String text, {bool isUser = false}) {
     setState(() {
       _messages.insert(0, ChatMessage(text, isUser: isUser));
-      _isLoading = !isUser;
+      if (!isUser) {
+        _isLoading = false;
+      }
     });
     Timer(const Duration(milliseconds: 100), () => _scrollController.jumpTo(0));
   }
 
-  void _handleSubmitted(String text) {
+  void _handleSubmitted(String text) async {
     _textController.clear();
     if (text.trim().isEmpty) return;
 
     _addMessage(text, isUser: true);
 
-    Future.delayed(const Duration(milliseconds: 1500), () {
-      _addMessage('${widget.drugInfo.itemName}의 "${text}"에 대한 답변입니다. (이것은 실제 AI 답변이 아닙니다)', isUser: false);
+    setState(() {
+      _isLoading = true;
     });
+
+    const apiUrl = 'https://kjyfi4w1u5.execute-api.ap-northeast-2.amazonaws.com/say-1-3team-final-prod1/say-1-3team-final-BedrockChatApi';
+
+    try {
+      final response = await http.post(
+        Uri.parse(apiUrl),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'prompt': text,
+          'sessionId': _sessionId 
+        }),
+      ).timeout(const Duration(seconds: 20));
+
+      // 디버깅용 print는 그대로 둡니다.
+      print('--- Server Response ---');
+      print('Status Code: ${response.statusCode}');
+      print('Raw Body: ${utf8.decode(response.bodyBytes)}');
+      print('-----------------------');
+
+      if (response.statusCode == 200) {
+        // 1. 서버 응답을 Dart 객체로 디코딩합니다.
+        final responseBody = json.decode(utf8.decode(response.bodyBytes));
+        
+        // 2. 보기 좋게 들여쓰기 된 JSON 문자열로 다시 변환합니다.
+        const encoder = JsonEncoder.withIndent('  '); // 2칸 들여쓰기
+        final formattedJsonString = encoder.convert(responseBody);
+
+        // 3. 변환된 전체 문자열을 채팅 메시지로 추가합니다.
+        _addMessage(formattedJsonString, isUser: false);
+
+      } else {
+        // 오류 발생 시에는 원본 응답 본문을 그대로 보여줍니다.
+        final errorBody = utf8.decode(response.bodyBytes);
+        _addMessage('오류가 발생했습니다. (상태 코드: ${response.statusCode})\n응답: $errorBody', isUser: false);
+      }
+    } catch (e) {
+      _addMessage('API 호출 중 오류가 발생했습니다: $e', isUser: false);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
   }
 
   @override
@@ -95,20 +147,27 @@ class _AiChatScreenState extends State<AiChatScreen> {
               padding: const EdgeInsets.all(8.0),
               reverse: true,
               itemCount: _messages.length,
-              // ✅ 1. 누락되었던 itemBuilder 추가
-              itemBuilder: (_, int index) {
-                final message = _messages[index];
-                return _buildChatBubble(message);
-              },
+              itemBuilder: (_, int index) => _buildChatBubble(_messages[index]),
             ),
           ),
+          if (_isLoading)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8.0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+                  const SizedBox(width: 12),
+                  Text("AI가 답변을 생각 중입니다...", style: TextStyle(color: Colors.grey[600])),
+                ],
+              ),
+            ),
           _buildMessageComposer(),
         ],
       ),
     );
   }
 
-  // ✅ 2. return 구문이 빠져있던 _buildChatBubble 함수 수정
   Widget _buildChatBubble(ChatMessage message) {
     final bubbleAlignment = message.isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start;
     final bubbleColor = message.isUser ? Colors.deepPurple : Colors.grey[200];
@@ -141,7 +200,6 @@ class _AiChatScreenState extends State<AiChatScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 10.0),
       decoration: BoxDecoration(
         color: Theme.of(context).cardColor,
-        // ✅ 3. BoxShadow(...) 부분을 실제 코드로 수정
         boxShadow: [
           BoxShadow(
             offset: const Offset(0, -1),
@@ -156,7 +214,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
             Expanded(
               child: TextField(
                 controller: _textController,
-                onSubmitted: _handleSubmitted,
+                onSubmitted: _isLoading ? null : _handleSubmitted,
                 decoration: const InputDecoration.collapsed(
                   hintText: '질문을 입력하거나 마이크를 누르세요',
                 ),
@@ -165,14 +223,14 @@ class _AiChatScreenState extends State<AiChatScreen> {
             IconButton(
               icon: Icon(_isListening ? Icons.mic_off : Icons.mic),
               color: Colors.deepPurple,
-              onPressed: _speechEnabled
-                  ? (_isListening ? _stopListening : _startListening)
-                  : null,
+              onPressed: _isLoading || !_speechEnabled
+                  ? null
+                  : (_isListening ? _stopListening : _startListening),
             ),
             IconButton(
               icon: const Icon(Icons.send),
               color: Colors.deepPurple,
-              onPressed: () => _handleSubmitted(_textController.text),
+              onPressed: _isLoading ? null : () => _handleSubmitted(_textController.text),
             ),
           ],
         ),
