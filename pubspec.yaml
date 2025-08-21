@@ -59,7 +59,7 @@ dependencies:
   speech_to_text: ^7.3.0 
   # tflite: ^1.1.2  
   tflite_flutter: ^0.11.0
-
+  uuid: ^4.4.0
   # flutter_pytorch: ^1.0.1
 
 dev_dependencies:
