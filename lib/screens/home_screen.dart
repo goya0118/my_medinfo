@@ -58,7 +58,7 @@ class HomeScreen extends StatelessWidget {
                     Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (context) => const BarcodeScannerScreen(),
+                        builder: (context) => BarcodeScannerScreen(),
                       ),
                     );
                   },
