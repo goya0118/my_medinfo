@@ -7,13 +7,15 @@ import 'ai_chat_screen.dart';
 class TitleHeader extends StatelessWidget implements PreferredSizeWidget {
   final String title;
   final String? leadingSvg;
+  final Widget? leading;
   final double height;
 
   const TitleHeader({
     super.key,
     this.title = '내꺼약',
-    this.leadingSvg,                 // 예: 'assets/images/bi.svg'
-    this.height = 120,               // AppBar 높이
+    this.leadingSvg,              // 예: 'assets/images/bi.svg'
+    this.leading,
+    this.height = 100,               // AppBar 높이
   });
 
   @override
@@ -23,40 +25,51 @@ class TitleHeader extends StatelessWidget implements PreferredSizeWidget {
   Widget build(BuildContext context) {
     return Material(
       color: Colors.white,
-      child: Container(
-        width: double.infinity,
-        height: height,
-        padding: const EdgeInsets.only(top: 16, left: 16, right: 16, bottom: 8),
-        decoration: const BoxDecoration(
-          border: Border(
-            bottom: BorderSide(color: Color(0xFFE8E8E8), width: 1),
+      child: SafeArea(
+        bottom: false,
+        child: Container(
+          width: double.infinity,
+          height: height,
+          padding: const EdgeInsets.only(top: 16, left: 16, right: 16, bottom: 8),
+          decoration: const BoxDecoration(
+            border: Border(
+              bottom: BorderSide(color: Color(0xFFE8E8E8), width: 1),
+            ),
           ),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            if (leadingSvg != null)
-              SizedBox(
-                width: 37,
-                height: 37,
-                child: SvgPicture.asset(leadingSvg!),
-              ),
-            if (leadingSvg != null) const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Color(0xFF5B32F4),
-                  fontSize: 32,
-                  fontWeight: FontWeight.w700,
-                  height: 1.2,
-                  letterSpacing: 0.4,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // 1) leading 위젯이 있으면 그걸 사용 (예: 뒤로가기 버튼)
+              if (leading != null) ...[
+                SizedBox(width: 37, height: 37, child: Center(child: leading)),
+                const SizedBox(width: 8),
+              ]
+              // 2) 없으면 SVG 사용
+              else if (leadingSvg != null) ...[
+                SizedBox(
+                  width: 37, height: 37,
+                  child: SvgPicture.asset(leadingSvg!),
+                ),
+                const SizedBox(width: 8),
+              ],
+              
+              // 타이틀
+              Expanded(
+                child: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF5B32F4),
+                    fontSize: 32,
+                    fontWeight: FontWeight.w700,
+                    height: 1.2,
+                    letterSpacing: 0.4,
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -116,13 +129,20 @@ class HomeScreen extends StatelessWidget {
               textColor: Colors.white,
               strokeColor: const Color(0xFF5B32F4),
               onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    // drugInfo 파라미터 없이 AiChatScreen을 호출합니다.
+                    builder: (context) => const AiChatScreen(),
+                  ),
+                );
                 // Navigator.push(
                 //   context,
                 //   MaterialPageRoute(builder: (_) => const AiChatScreen()),
                 // );
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('AI 질문 기능 준비 중입니다')),
-                );
+                // ScaffoldMessenger.of(context).showSnackBar(
+                //   const SnackBar(content: Text('AI 질문 기능 준비 중입니다')),
+                // );
               },
             ),
             const SizedBox(height: 20),

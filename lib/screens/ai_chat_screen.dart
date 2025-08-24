@@ -1,10 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'dart:async';
 import 'dart:convert';
+// [수정] 'package.http'를 'package:http'로 변경
 import 'package:http/http.dart' as http;
+import 'package:medinfo/screens/home_screen.dart';
 import 'package:uuid/uuid.dart';
 import '../models/drug_info.dart';
 import 'package:speech_to_text/speech_to_text.dart';
+
+// (이하 코드는 이전과 동일)
 
 // 채팅 메시지를 표현하는 간단한 클래스
 class ChatMessage {
@@ -14,8 +19,8 @@ class ChatMessage {
 }
 
 class AiChatScreen extends StatefulWidget {
-  final DrugInfo drugInfo;
-  const AiChatScreen({super.key, required this.drugInfo});
+  final DrugInfo? drugInfo;
+  const AiChatScreen({super.key, this.drugInfo});
 
   @override
   State<AiChatScreen> createState() => _AiChatScreenState();
@@ -38,7 +43,76 @@ class _AiChatScreenState extends State<AiChatScreen> {
   void initState() {
     super.initState();
     _initSpeech();
-    _addMessage('안녕하세요! ${widget.drugInfo.itemName}에 대해 무엇이 궁금하신가요?', isUser: false);
+    _generateInitialMessage();
+  }
+
+  void _generateInitialMessage() async {
+    // 1. 약물 정보가 있는 경우 (바코드 스캔)
+    if (widget.drugInfo != null) {
+      try {
+        final atcCode = widget.drugInfo!.atcCode;
+        final engName = widget.drugInfo!.engName;
+
+        if (atcCode == null ||
+            engName == null ||
+            atcCode.isEmpty ||
+            engName.isEmpty) {
+          throw Exception('ATC 코드 또는 영문명이 없습니다.');
+        }
+
+        final firstWordOfEngName = engName.split(' ')[0];
+        final fileName = '${atcCode}_$firstWordOfEngName.json';
+        final assetPath = 'lib/widgets/drug_info_jsonfiles/$fileName';
+
+        final jsonString = await rootBundle.loadString(assetPath);
+        final jsonData = json.decode(jsonString);
+
+        final summary = jsonData['summary'];
+        final efficacy = summary['efficacy'] ?? '정보 없음';
+        final dosage = summary['dosage'] ?? '정보 없음';
+
+        const delay = Duration(milliseconds: 800);
+
+        _addMessage(
+          "안녕하세요! 검색하신 약물은 ${widget.drugInfo!.itemName}입니다.",
+          isUser: false,
+        );
+        await Future.delayed(delay);
+        _addMessage(
+          "${widget.drugInfo!.itemName}의 효능은 ${efficacy}",
+          isUser: false,
+        );
+        await Future.delayed(delay);
+        _addMessage(
+          dosage,
+          isUser: false,
+        );
+        await Future.delayed(delay);
+        _addMessage(
+          "해당 약에 대해 더 궁금하신 내용이 있으신가요?",
+          isUser: false,
+        );
+      } catch (e) {
+        print('초기 메시지 생성 오류 (파일 없음): $e');
+        const delay = Duration(milliseconds: 800);
+        _addMessage(
+          "안녕하세요! 검색된 약물은 ${widget.drugInfo!.itemName}입니다.",
+          isUser: false,
+        );
+        await Future.delayed(delay);
+        _addMessage(
+          "죄송하지만 아직 해당 약물에 대한 상세 정보가 준비되지 않아 안내해 드리기 어렵습니다.",
+          isUser: false,
+        );
+      }
+    }
+    // 2. 약물 정보가 없는 경우 (메인 화면에서 진입)
+    else {
+      _addMessage(
+        "안녕하세요! 의약품에 대해 궁금한 점을 무엇이든 물어보세요.",
+        isUser: false,
+      );
+    }
   }
 
   void _initSpeech() async {
@@ -67,6 +141,21 @@ class _AiChatScreenState extends State<AiChatScreen> {
     });
   }
 
+  void _handleMicButtonPressed() {
+    if (!_speechEnabled || _isLoading) return;
+
+    if (_isListening) {
+      _stopListening();
+      if (_textController.text.trim().isNotEmpty) {
+        _handleSubmitted(_textController.text);
+      }
+    } else {
+      _textController.clear();
+      _startListening();
+    }
+  }
+
+
   void _addMessage(String text, {bool isUser = false}) {
     setState(() {
       _messages.insert(0, ChatMessage(text, isUser: isUser));
@@ -90,32 +179,60 @@ class _AiChatScreenState extends State<AiChatScreen> {
     const apiUrl = 'https://kjyfi4w1u5.execute-api.ap-northeast-2.amazonaws.com/say-1-3team-final-prod1/say-1-3team-final-BedrockChatApi';
 
     try {
-      final response = await http.post(
-        Uri.parse(apiUrl),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({
-          'prompt': text,
-          'sessionId': _sessionId 
-        }),
-      ).timeout(const Duration(seconds: 20));
+      final newPrompt = widget.drugInfo != null
+        ? """
+        "${widget.drugInfo!.itemName}"에 대한 질문입니다. 사용자의 질문은 다음과 같습니다: "$text"
 
-      // 디버깅용 print는 그대로 둡니다.
-      print('--- Server Response ---');
-      print('Status Code: ${response.statusCode}');
-      print('Raw Body: ${utf8.decode(response.bodyBytes)}');
-      print('-----------------------');
+        ---
+        너는 의약품 정보를 쉽고 친절하게 설명해주는 약사 AI야.
+        주어진 참고 자료에서 반드시 "${widget.drugInfo!.itemName}"에 대한 정보만을 사용하여 위 질문에 답변해야 해.
+        만약 참고 자료에 이 약에 대한 정보가 없다면, 정보를 찾을 수 없다고 답변해야 한다.
+        답변은 초등학생도 이해할 수 있도록 세 문장 이내로 간결하게 설명해줘.
+        """
+        : """
+        사용자의 의약품 관련 질문은 다음과 같습니다: "$text"
+
+        ---
+        너는 의약품 정보를 쉽고 친절하게 설명해주는 약사 AI야.
+        너가 알고 있는 신뢰할 수 있는 의약품 지식에 기반하여 답변해야 해.
+        만약 질문에 대한 정보가 없다면, 정보를 찾을 수 없다고 솔직하게 답변해야 한다.
+        답변은 초등학생도 이해할 수 있도록 세 문장 이내로 간결하게 설명해줘.
+        """;
+
+
+      final response = await http
+          .post(
+            Uri.parse(apiUrl),
+            headers: {'Content-Type': 'application/json'},
+            body: json.encode({'prompt': newPrompt, 'sessionId': _sessionId}),
+          )
+          .timeout(const Duration(seconds: 20));
 
       if (response.statusCode == 200) {
         // 1. 서버 응답을 Dart 객체로 디코딩합니다.
         final responseBody = json.decode(utf8.decode(response.bodyBytes));
-        
-        // 2. 보기 좋게 들여쓰기 된 JSON 문자열로 다시 변환합니다.
-        const encoder = JsonEncoder.withIndent('  '); // 2칸 들여쓰기
-        final formattedJsonString = encoder.convert(responseBody);
 
-        // 3. 변환된 전체 문자열을 채팅 메시지로 추가합니다.
-        _addMessage(formattedJsonString, isUser: false);
+        String content = '죄송합니다. 답변을 이해할 수 없습니다.';
+        try {
+          if (responseBody is Map && responseBody.containsKey('completion')) {
+            content = responseBody['completion'];
+          } else if (responseBody is List &&
+              responseBody.isNotEmpty &&
+              responseBody[0] is Map &&
+              responseBody[0].containsKey('completion')) {
+            content = responseBody[0]['completion'];
+          } else if (responseBody is List &&
+              responseBody.isNotEmpty &&
+              responseBody[0] is String) {
+            content = responseBody[0];
+          } else {
+            content = '예상치 못한 답변 형식입니다: $responseBody';
+          }
+        } catch (e) {
+          content = '답변 처리 중 오류가 발생했습니다: $e';
+        }
 
+        _addMessage(content, isUser: false);
       } else {
         // 오류 발생 시에는 원본 응답 본문을 그대로 보여줍니다.
         final errorBody = utf8.decode(response.bodyBytes);
@@ -134,10 +251,18 @@ class _AiChatScreenState extends State<AiChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final appBarTitle = widget.drugInfo != null
+        ? 'AI 상담: ${widget.drugInfo!.itemName}'
+        : 'AI 상담';
+
     return Scaffold(
-      appBar: AppBar(
-        title: Text('${widget.drugInfo.itemName} AI 상담'),
-        backgroundColor: Colors.deepPurple.shade100,
+      backgroundColor: Colors.white,
+      appBar: TitleHeader(
+        title: appBarTitle,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Color(0xff5B32F4)),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
       ),
       body: Column(
         children: [
@@ -169,25 +294,36 @@ class _AiChatScreenState extends State<AiChatScreen> {
   }
 
   Widget _buildChatBubble(ChatMessage message) {
-    final bubbleAlignment = message.isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start;
-    final bubbleColor = message.isUser ? Colors.deepPurple : Colors.grey[200];
-    final textColor = message.isUser ? Colors.white : Colors.black87;
+    final isUser = message.isUser;
 
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 5.0),
+    final bg = isUser ? const Color(0xFF5B32F4) : const Color(0xFFF6F6FA);
+    final fg = isUser ? Colors.white : const Color(0xFF222222);
+    final align = isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 6.0),
       child: Column(
-        crossAxisAlignment: bubbleAlignment,
+        crossAxisAlignment: align,
         children: [
-          Container(
-            constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
-            padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 10.0),
-            decoration: BoxDecoration(
-              color: bubbleColor,
-              borderRadius: BorderRadius.circular(16),
+          ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width * 0.78,
             ),
-            child: Text(
-              message.text,
-              style: TextStyle(color: textColor),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 12.0),
+              decoration: BoxDecoration(
+                color: bg,
+                borderRadius: BorderRadius.only(
+                  topLeft: const Radius.circular(16),
+                  topRight: const Radius.circular(16),
+                  bottomLeft: isUser ? const Radius.circular(16) : const Radius.circular(4),
+                  bottomRight: isUser ? const Radius.circular(4) : const Radius.circular(16),
+                ),
+              ),
+              child: SelectableText(
+                message.text,
+                style: TextStyle(color: fg, fontSize: 20, height: 1.2),
+              ),
             ),
           ),
         ],
@@ -196,44 +332,82 @@ class _AiChatScreenState extends State<AiChatScreen> {
   }
   
   Widget _buildMessageComposer() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 10.0),
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardColor,
-        boxShadow: [
-          BoxShadow(
-            offset: const Offset(0, -1),
-            blurRadius: 2,
-            color: Colors.grey.withOpacity(0.1),
-          ),
-        ],
+    const radius = 8.0;
+    const borderColor = Color(0xFF8E8E93);
+
+    return Material(
+      // 둥근 사각형 테두리를 “밖쪽”으로 그립니다.
+      shape: RoundedRectangleBorder(
+        borderRadius: const BorderRadius.only(
+          topLeft: Radius.circular(radius),
+          topRight: Radius.circular(radius),
+        ),
+        side: const BorderSide(
+          color: borderColor,
+          width: 1,
+          // ↓ Flutter 버전에 따라 지원. 에러 나면 이 줄만 지우세요.
+          strokeAlign: BorderSide.strokeAlignOutside,
+        ),
       ),
-      child: SafeArea(
-        child: Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: _textController,
-                onSubmitted: _isLoading ? null : _handleSubmitted,
-                decoration: const InputDecoration.collapsed(
-                  hintText: '질문을 입력하거나 마이크를 누르세요',
-                ),
+      color: Colors.transparent,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          // 본체: 배경/패딩
+          Container(
+            decoration: const BoxDecoration(
+              color: Color(0xFFF7F7FA),
+              borderRadius: BorderRadius.only(
+                topLeft: Radius.circular(radius),
+                topRight: Radius.circular(radius),
               ),
             ),
-            IconButton(
-              icon: Icon(_isListening ? Icons.mic_off : Icons.mic),
-              color: Colors.deepPurple,
-              onPressed: _isLoading || !_speechEnabled
-                  ? null
-                  : (_isListening ? _stopListening : _startListening),
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            child: SafeArea(
+              top: false,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _textController,
+                      minLines: 1,
+                      maxLines: 4,
+                      onSubmitted: _isLoading ? null : _handleSubmitted,
+                      decoration: const InputDecoration.collapsed(
+                        hintText: '질문을 입력하거나 마이크를 누르세요',
+                        hintStyle: TextStyle(
+                          color: Color(0xFF999999),
+                          fontSize: 20,
+                          height: 1.2
+                        ),
+                      ),
+                      style: const TextStyle(fontSize: 20),
+                    ),
+                  ),
+                  IconButton(
+                    icon: Icon(_isListening ? Icons.stop_circle_outlined : Icons.mic),
+                    color: _isListening ? Colors.redAccent : Color(0xff5B32F4),
+                    onPressed: _handleMicButtonPressed,
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.send),
+                    color: Color(0xff5B32F4),
+                    onPressed: _isLoading ? null : () => _handleSubmitted(_textController.text),
+                  ),
+                ],
+              ),
             ),
-            IconButton(
-              icon: const Icon(Icons.send),
-              color: Colors.deepPurple,
-              onPressed: _isLoading ? null : () => _handleSubmitted(_textController.text),
+          ),
+
+          // 아랫변 가리개: 같은 배경색으로 살짝 덮어 “상/좌/우만 보더”
+          Positioned(
+            left: -2, right: -2, bottom: -2, height: 4,
+            child: Container(
+              // 화면 배경색(스크린 배경이 흰색이면 Colors.white 써도 됩니다)
+              color: Theme.of(context).scaffoldBackgroundColor,
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
