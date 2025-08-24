@@ -2,10 +2,163 @@ import 'package:camera/camera.dart';
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'dart:typed_data';
-import 'dart:convert';
 import 'package:flutter/services.dart';
+import 'dart:collection';
 import 'dart:async';
 import 'dart:math' as math;
+import 'package:image/image.dart' as img;
+import 'package:flutter/foundation.dart'; // compute를 위해 추가
+
+// ================================================================================
+// 데이터 클래스들 (먼저 정의)
+// ================================================================================
+
+/// 카메라 초기화 결과
+class CameraInitResult {
+  final bool isSuccess;
+  final bool isPermissionDenied;
+  final String? errorMessage;
+
+  CameraInitResult._({
+    required this.isSuccess,
+    required this.isPermissionDenied,
+    this.errorMessage,
+  });
+
+  factory CameraInitResult.success() => CameraInitResult._(
+        isSuccess: true,
+        isPermissionDenied: false,
+      );
+
+  factory CameraInitResult.permissionDenied() => CameraInitResult._(
+        isSuccess: false,
+        isPermissionDenied: true,
+        errorMessage: '카메라 권한이 필요합니다.',
+      );
+
+  factory CameraInitResult.error(String message) => CameraInitResult._(
+        isSuccess: false,
+        isPermissionDenied: false,
+        errorMessage: message,
+      );
+
+  String getUserMessage() {
+    if (isSuccess) return '카메라가 준비되었습니다';
+    return errorMessage ?? '카메라 초기화에 실패했습니다';
+  }
+}
+
+/// YOLO 탐지 결과
+class YOLODetection {
+  final BoundingBox bbox;
+  final String className;
+  final double confidence;
+  final int classId;
+  
+  YOLODetection({
+    required this.bbox,
+    required this.className,
+    required this.confidence,
+    required this.classId,
+  });
+  
+  @override
+  String toString() => '$className (${(confidence * 100).toStringAsFixed(1)}%)';
+}
+
+/// 바운딩 박스
+class BoundingBox {
+  final double x;
+  final double y;
+  final double width;
+  final double height;
+  
+  BoundingBox({
+    required this.x,
+    required this.y,
+    required this.width,
+    required this.height,
+  });
+  
+  double get centerX => x + width / 2;
+  double get centerY => y + height / 2;
+  double get right => x + width;
+  double get bottom => y + height;
+}
+
+/// 바코드 처리용 데이터
+class BarcodeProcessData {
+  final CameraImage cameraImage;
+  final CameraDescription cameraDescription;
+  final bool isNavigatingAway;
+  final bool isWidgetActive;
+  final String? currentWidgetId;
+  final String? lastDetectedBarcode;
+  final DateTime? lastBarcodeSuccessTime;
+  final DateTime? lastNavigationTime;
+  final int barcodeSkipDuration;
+  final int navigationCooldown;
+
+  BarcodeProcessData({
+    required this.cameraImage,
+    required this.cameraDescription,
+    required this.isNavigatingAway,
+    required this.isWidgetActive,
+    required this.currentWidgetId,
+    this.lastDetectedBarcode,
+    this.lastBarcodeSuccessTime,
+    this.lastNavigationTime,
+    required this.barcodeSkipDuration,
+    required this.navigationCooldown,
+  });
+}
+
+/// 바코드 처리 결과
+class BarcodeProcessResult {
+  final bool isSuccess;
+  final String? barcodeValue;
+  final String? errorMessage;
+
+  BarcodeProcessResult({
+    required this.isSuccess,
+    this.barcodeValue,
+    this.errorMessage,
+  });
+
+  factory BarcodeProcessResult.success(String barcodeValue) =>
+      BarcodeProcessResult(isSuccess: true, barcodeValue: barcodeValue);
+
+  factory BarcodeProcessResult.failure([String? error]) =>
+      BarcodeProcessResult(isSuccess: false, errorMessage: error);
+}
+
+/// YOLO 전처리용 데이터
+class YOLOPreprocessData {
+  final CameraImage cameraImage;
+  final int inputSize;
+
+  YOLOPreprocessData({
+    required this.cameraImage,
+    required this.inputSize,
+  });
+}
+
+/// YOLO 전처리 결과
+class YOLOPreprocessResult {
+  final Float32List inputTensor;
+  final int originalWidth;
+  final int originalHeight;
+
+  YOLOPreprocessResult({
+    required this.inputTensor,
+    required this.originalWidth,
+    required this.originalHeight,
+  });
+}
+
+// ================================================================================
+// 메인 CameraManager 클래스
+// ================================================================================
 
 class CameraManager {
   // Camera 컨트롤러
@@ -35,24 +188,35 @@ class CameraManager {
     }
   }
   
-  // TensorFlow Lite 모델
-  Interpreter? _pillModel;
-  List<String>? _labels;
-  Map<String, dynamic>? _modelInfo;
+  // TensorFlow Lite YOLO 모델 (TensorFlow Lite 타입 직접 사용)
+  Interpreter? _yoloInterpreter;
+  List<String>? _classNames;
+  
+  // TensorFlow Lite 설정
+  late List<int> _inputShape;
+  late List<int> _outputShape;
+  late TensorType _inputType;
+  late TensorType _outputType;
   
   // 인식 상태
-  bool _isPillDetectionActive = false;
+  bool _isYOLODetectionActive = false;
   bool _isBarcodeDetectionActive = false;
-  bool _isPillDetectionRunning = false;
+  bool _isYOLODetectionRunning = false;
   bool _isBarcodeDetectionRunning = false;
   bool _isImageStreamActive = false;
   
   // 콜백
   Function(String)? _onBarcodeDetected;
-  Function(PillClassificationResult?)? _onPillDetected;
+  Function(List<YOLODetection>)? _onYOLODetected;
   
-  // 마지막 처리 시간 (중복 방지)
-  DateTime? _lastPillDetectionTime;
+  // 독립적인 프레임 큐 시스템 (메모리 최적화)
+  final Queue<CameraImage> _frameQueue = Queue<CameraImage>();
+  Timer? _yoloProcessingTimer;
+  Timer? _barcodeProcessingTimer;
+  static const int _maxQueueSize = 1; // 1개 프레임만 유지 (메모리 절약)
+  
+  // 마지막 처리 시간 (호환성 유지)
+  DateTime? _lastYOLODetectionTime;
   DateTime? _lastBarcodeDetectionTime;
   
   // 중복 인식 방지
@@ -62,30 +226,33 @@ class CameraManager {
   // 화면 전환 추적
   bool _isNavigatingAway = false;
   DateTime? _lastNavigationTime;
-  
-  // 위젯 생명주기 추적 (중요!)
   bool _isWidgetActive = false;
   String? _currentWidgetId;
   
-  // 성능 최적화 설정
-  static const int _barcodeDetectionInterval = 500; // 0.5초
-  static const int _pillDetectionInterval = 2000;   // 2초
-  static const int _barcodeSkipDuration = 5000;     // 5초간 같은 바코드 스킵 (늘림)
-  static const int _navigationCooldown = 3000;     // 화면 전환 후 3초 쿨다운 (늘림)
+  // 성능 최적화 설정 - 저사양 기기 대응
+  static const int _barcodeDetectionInterval = 800;  // 0.8초
+  static const int _yoloDetectionInterval = 3000;    // 3초 (성능 고려)
+  static const int _barcodeSkipDuration = 5000;      // 5초간 같은 바코드 스킵
+  static const int _navigationCooldown = 3000;       // 화면 전환 후 3초 쿨다운
+  
+  // YOLO 설정 - 모델 학습 크기 유지 (필수!)
+  static const double _confidenceThreshold = 0.85;    // 임계값 
+  static const double _iouThreshold = 0.4;           // NMS IoU 임계값
+  static const int _inputSize = 768;                 // 모델 학습 크기 그대로 유지
   
   bool get isInitialized => _cameraController?.value.isInitialized == true;
   CameraController? get cameraController => _cameraController;
 
-  /// 통합 카메라 초기화
+  /// 통합 카메라 초기화 (YOLO + 바코드)
   Future<CameraInitResult> initializeCamera() async {
     try {
-      print('🔍 Camera + ML Kit 통합 카메라 초기화 시작');
+      print('🔍 TensorFlow Lite YOLO + 바코드 통합 카메라 초기화 시작');
       
       // 기존 정리
       await dispose();
       
-      // 1. TensorFlow Lite 모델 로드 (알약 인식용)
-      await _loadTensorFlowLiteModel();
+      // 1. YOLO TensorFlow Lite 모델 로드
+      await _loadYOLOModel();
       
       // 2. Camera 초기화
       await _initializeCamera();
@@ -111,9 +278,9 @@ class CameraManager {
     }
   }
 
-  /// Camera 초기화
+  /// Camera 초기화 (성능 최적화)
   Future<void> _initializeCamera() async {
-    print('📷 Camera 초기화');
+    print('📷 Camera 초기화 (성능 최적화 모드)');
     
     final cameras = await availableCameras();
     if (cameras.isEmpty) {
@@ -125,54 +292,86 @@ class CameraManager {
       orElse: () => cameras.first,
     );
     
-    // Android에서 ML Kit 호환성을 위해 NV21 포맷 사용
+    // 성능 최적화된 카메라 설정
     _cameraController = CameraController(
       backCamera,
-      ResolutionPreset.high,
+      ResolutionPreset.medium,  // medium 
       enableAudio: false,
       imageFormatGroup: ImageFormatGroup.nv21, // Android: NV21, iOS: YUV420 자동 선택
     );
     
     await _cameraController!.initialize();
     
-    // 초기화 후 잠깐 대기
-    await Future.delayed(Duration(milliseconds: 500));
+    // 카메라 기능 최적화 (불필요한 기능 비활성화)
+    try {
+      await _cameraController!.setExposureMode(ExposureMode.locked); // 자동 노출 비활성화
+      print('✅ 카메라 기능 최적화 완료');
+    } catch (e) {
+      print('⚠️ 카메라 기능 최적화 실패 (무시): $e');
+    }
+    
+    // 초기화 후 대기 시간 단축
+    await Future.delayed(Duration(milliseconds: 200)); // 500ms → 200ms
     
     print('✅ Camera 초기화 완료 (해상도: ${_cameraController!.value.previewSize})');
   }
 
-  /// TensorFlow Lite 모델 로드
-  Future<void> _loadTensorFlowLiteModel() async {
+  /// YOLO v8 TensorFlow Lite 모델 로드 (성능 최적화)
+  Future<void> _loadYOLOModel() async {
     try {
-      print('🤖 TensorFlow Lite 모델 로딩');
       
-      _pillModel = await Interpreter.fromAsset('assets/models/pill_classifier_mobile.tflite');
+      final interpreterOptions = InterpreterOptions()
+    ..threads = 1; 
+      print('🔄 CPU 단일 스레드 모드로 실행');
+      
+      // TensorFlow Lite 모델 파일 로드
+      _yoloInterpreter = await Interpreter.fromAsset(
+        'assets/models/best.tflite',
+        options: interpreterOptions,
+      );
+      
       print('✅ TensorFlow Lite 모델 로드 완료');
       
-      final modelInfoString = await rootBundle.loadString('assets/models/model_info.json');
-      _modelInfo = json.decode(modelInfoString);
-      print('✅ 모델 정보 로드 완료');
+      // 모델 정보 확인
+      _inputShape = _yoloInterpreter!.getInputTensor(0).shape;
+      _outputShape = _yoloInterpreter!.getOutputTensor(0).shape;
+      _inputType = _yoloInterpreter!.getInputTensor(0).type;
+      _outputType = _yoloInterpreter!.getOutputTensor(0).type;
       
-      final labelsString = await rootBundle.loadString('assets/models/labels.txt');
-      _labels = labelsString.trim().split('\n');
-      print('✅ 라벨 로드 완료: ${_labels!.length}개 클래스');
+      print('📊 모델 정보 (성능 최적화):');
+      print('  - 입력 형태: $_inputShape (타입: $_inputType)');
+      print('  - 출력 형태: $_outputShape (타입: $_outputType)');
+      print('  - 처리 크기: ${_inputSize}x${_inputSize} (축소됨)');
+      
+      // 클래스 이름 로드 (오류 처리 강화)
+      try {
+        final classNamesString = await rootBundle.loadString('assets/models/class_names.txt');
+        _classNames = classNamesString.trim().split('\n').where((name) => name.isNotEmpty).toList();
+        print('✅ 클래스 이름 로드 완료: ${_classNames!.length}개 클래스');
+        print('📋 클래스 목록: $_classNames');
+      } catch (e) {
+        print('⚠️ 클래스 이름 파일 로드 실패: $e');
+        print('🔄 기본 클래스 이름 사용');
+        _classNames = ['pill_type_1', 'pill_type_2']; // 기본값
+      }
       
     } catch (e) {
-      print('❌ TensorFlow Lite 모델 로드 실패: $e');
+      print('❌ YOLO 모델 로드 실패: $e');
       throw e;
     }
   }
+  
 
-  /// 통합 인식 시작 (바코드 + 알약)
+  /// 통합 인식 시작 (바코드 + YOLO)
   void startDetection({
     Function(String)? onBarcodeDetected,
-    Function(PillClassificationResult?)? onPillDetected,
+    Function(List<YOLODetection>)? onYOLODetected,
     bool enableVibration = true,
-    bool clearPreviousResults = true, // 이전 결과 초기화 옵션
-    String? widgetId, // 위젯 식별자 추가
+    bool clearPreviousResults = true,
+    String? widgetId,
   }) {
     _onBarcodeDetected = onBarcodeDetected;
-    _onPillDetected = onPillDetected;
+    _onYOLODetected = onYOLODetected;
     
     // 위젯 활성화 및 식별자 설정
     _isWidgetActive = true;
@@ -183,12 +382,14 @@ class CameraManager {
       return;
     }
 
-    print('🔄 통합 인식 시작 (바코드: ${onBarcodeDetected != null}, 알약: ${onPillDetected != null})');
+    print('🔄 통합 인식 시작 (바코드: ${onBarcodeDetected != null}, YOLO: ${onYOLODetected != null})');
     print('🆔 위젯 ID: $_currentWidgetId');
     
     _isBarcodeDetectionActive = onBarcodeDetected != null;
-    _isPillDetectionActive = onPillDetected != null;
-    _lastPillDetectionTime = null;
+    _isYOLODetectionActive = onYOLODetected != null;
+    _lastYOLODetectionTime = null;
+    _lastBarcodeDetectionTime = null;
+    _lastYOLODetectionTime = null;
     _lastBarcodeDetectionTime = null;
     
     // 화면 전환 상태 초기화
@@ -235,204 +436,174 @@ class CameraManager {
     }
   }
 
-  /// 이미지 스트림 시작 (플랫폼별 최적화)
+  /// 이미지 스트림 시작 (완전 분리형)
   void _startImageStream() {
     if (_isImageStreamActive) return;
-    
-    print('📸 이미지 스트림 시작');
+
+    print('📸 이미지 스트림 시작 (완전 분리형 처리)');
     _isImageStreamActive = true;
-    
-    // 스트림 시작 전 충분한 대기 (이전 프레임 완전 클리어)
+
     Future.delayed(Duration(milliseconds: 800), () {
-      if (!_isImageStreamActive) return; // 중간에 중지되었으면 리턴
-      
+      if (!_isImageStreamActive) return;
+
       print('📸 실제 이미지 스트림 시작');
       _cameraController!.startImageStream((CameraImage image) async {
         if (!_isImageStreamActive || _isNavigatingAway) return;
-        
-        // 백그라운드에서 처리 (UI 블로킹 방지)
-        Future.microtask(() async {
-          await _processImage(image);
-        });
+
+        // 단순히 프레임만 큐에 추가 (처리는 별도 타이머에서)
+        _processImageInBackground(image);
       });
+      
+      // 독립적인 처리 타이머들 시작
+      _startBarcodeProcessingTimer();
+      _startYOLOProcessingTimer();
     });
   }
 
-  /// 이미지 처리 (바코드 + 알약) - 최적화된 타이밍
-  Future<void> _processImage(CameraImage cameraImage) async {
+  /// 백그라운드 이미지 처리 (메모리 최적화)
+  void _processImageInBackground(CameraImage cameraImage) {
     try {
       // 화면 전환 중이면 모든 처리 중단
       if (_isNavigatingAway) {
         return;
       }
       
-      final now = DateTime.now();
-      
-      // 1. 바코드 인식 (0.5초 간격, 중복 스킵)
-      if (_isBarcodeDetectionActive && !_isBarcodeDetectionRunning) {
-        if (_lastBarcodeDetectionTime == null || 
-            now.difference(_lastBarcodeDetectionTime!).inMilliseconds >= _barcodeDetectionInterval) {
-          _lastBarcodeDetectionTime = now;
-          
-          // 백그라운드에서 비동기 처리 (UI 끊김 방지)
-          _detectBarcodeAsync(cameraImage);
+      // 큐가 가득 찬 경우 오래된 프레임 즉시 정리
+      if (_frameQueue.length >= _maxQueueSize) {
+        while (_frameQueue.isNotEmpty) {
+          _frameQueue.removeFirst();
         }
       }
       
-      // 2. 알약 인식 (2초 간격)
-      if (_isPillDetectionActive && !_isPillDetectionRunning) {
-        if (_lastPillDetectionTime == null || 
-            now.difference(_lastPillDetectionTime!).inMilliseconds >= _pillDetectionInterval) {
-          _lastPillDetectionTime = now;
-          
-          // 백그라운드에서 비동기 처리 (UI 끊김 방지)
-          _detectPillAsync(cameraImage);
-        }
-      }
+      // 새 프레임 추가
+      _frameQueue.add(cameraImage);
       
     } catch (e) {
-      print('❌ 이미지 처리 오류: $e');
-      // 화면 전환 중 오류는 무시
-      if (_isNavigatingAway) {
-        print('🚫 화면 전환 중 이미지 처리 오류 발생, 무시');
-      }
+      print('❌ 프레임 큐잉 오류: $e');
+      // 오류 발생 시 큐 완전 정리
+      _frameQueue.clear();
     }
   }
 
-  /// 비동기 바코드 인식 (UI 블로킹 방지)
-  void _detectBarcodeAsync(CameraImage cameraImage) {
+  /// 독립적인 바코드 처리 타이머 시작
+  void _startBarcodeProcessingTimer() {
+    _barcodeProcessingTimer?.cancel();
+    
+    if (!_isBarcodeDetectionActive) return;
+    
+    _barcodeProcessingTimer = Timer.periodic(Duration(milliseconds: _barcodeDetectionInterval), (timer) async {
+      if (_isNavigatingAway || !_isWidgetActive) {
+        return;
+      }
+      
+      if (_isBarcodeDetectionRunning) {
+        return; // 로그 스팸 방지
+      }
+      
+      // 큐가 비어있으면 스킵
+      if (_frameQueue.isEmpty) {
+        return;
+      }
+      
+      // 최신 프레임으로 바코드 처리 (프레임 즉시 소비)
+      final frame = _frameQueue.removeLast();
+      await _processBarcodeFromQueue(frame);
+    });
+    
+    print('✅ 독립적인 바코드 처리 타이머 시작 (${_barcodeDetectionInterval}ms)');
+  }
+
+  /// 독립적인 YOLO 처리 타이머 시작
+  void _startYOLOProcessingTimer() {
+    _yoloProcessingTimer?.cancel();
+    
+    if (!_isYOLODetectionActive) return;
+    
+    _yoloProcessingTimer = Timer.periodic(Duration(milliseconds: _yoloDetectionInterval), (timer) async {
+      if (_isNavigatingAway || !_isWidgetActive) {
+        return;
+      }
+      
+      if (_isYOLODetectionRunning) {
+        return; // 로그 스팸 방지
+      }
+      
+      // 큐가 비어있으면 스킵
+      if (_frameQueue.isEmpty) {
+        return;
+      }
+      
+      // 최신 프레임으로 YOLO 처리 (프레임 즉시 소비)
+      final frame = _frameQueue.removeLast();
+      await _processYOLOFromQueue(frame);
+    });
+    
+    print('✅ 독립적인 YOLO 처리 타이머 시작 (${_yoloDetectionInterval}ms)');
+  }
+
+  /// 큐에서 바코드 처리 (완전 독립적)
+  Future<void> _processBarcodeFromQueue(CameraImage cameraImage) async {
     if (_isBarcodeDetectionRunning || _isNavigatingAway) return;
-    
-    // 별도 isolate에서 처리
-    Future.microtask(() async {
-      if (!_isNavigatingAway) { // 한 번 더 체크
-        await _detectBarcode(cameraImage);
-      }
-    });
-  }
-
-  /// 비동기 알약 인식 (UI 블로킹 방지)
-  void _detectPillAsync(CameraImage cameraImage) {
-    if (_isPillDetectionRunning || _isNavigatingAway) return;
-    
-    // 별도 isolate에서 처리
-    Future.microtask(() async {
-      if (!_isNavigatingAway) { // 한 번 더 체크
-        await _detectPill(cameraImage);
-      }
-    });
-  }
-
-  /// ML Kit 바코드 인식 (null 체크 강화된 버전)
-  Future<void> _detectBarcode(CameraImage cameraImage) async {
-    if (_isBarcodeDetectionRunning) return;
     
     _isBarcodeDetectionRunning = true;
     
     try {
+      // 상태 체크
+      if (_isNavigatingAway || !_isWidgetActive) {
+        return;
+      }
+      
       final now = DateTime.now();
       
-      // 위젯이 비활성화되었으면 즉시 종료
-      if (!_isWidgetActive) {
-        print('🚫 위젯 비활성화 상태, 바코드 인식 중단');
-        return;
-      }
-      
-      // 화면 전환 중이면 즉시 종료
-      if (_isNavigatingAway) {
-        print('🚫 화면 전환 중이므로 바코드 인식 완전 중단');
-        return;
-      }
-      
-      // 바코드 스캐너 null 체크 (중요!)
-      if (_barcodeScanner == null) {
-        print('❌ 바코드 스캐너가 null입니다. 재초기화 시도...');
-        _initializeBarcodeScanner();
-        if (_barcodeScanner == null) {
-          print('❌ 바코드 스캐너 재초기화 실패');
-          return;
-        }
-      }
-      
-      // 네비게이션 쿨다운 체크 (강화)
+      // 네비게이션 쿨다운 체크
       if (_lastNavigationTime != null) {
         final timeSinceNavigation = now.difference(_lastNavigationTime!).inMilliseconds;
         if (timeSinceNavigation < _navigationCooldown) {
-          print('🚫 네비게이션 쿨다운 중 (${timeSinceNavigation}ms/${_navigationCooldown}ms)');
           return;
         }
       }
       
-      // 강화된 중복 바코드 스킵 로직
+      // 중복 바코드 스킵 체크
       if (_lastDetectedBarcode != null && _lastBarcodeSuccessTime != null) {
         final timeSinceLastDetection = now.difference(_lastBarcodeSuccessTime!).inMilliseconds;
         if (timeSinceLastDetection < _barcodeSkipDuration) {
-          print('🚫 중복 바코드 스킵 (${timeSinceLastDetection}ms/${_barcodeSkipDuration}ms)');
           return;
         }
       }
       
-      // 이미지 크기 줄여서 처리 속도 향상
-      final inputImage = _createOptimizedInputImageSafe(cameraImage);
-      if (inputImage == null) {
-        print('❌ 최적화된 InputImage 생성 실패');
-        return;
-      }
-      
-      // 다시 한 번 상태 체크 (중요!)
-      if (_isNavigatingAway || !_isWidgetActive) {
-        print('🚫 InputImage 생성 후 상태 변경 감지, 중단');
-        return;
-      }
-      
-      print('📷 바코드 스캔 실행 중... (위젯: $_currentWidgetId)');
-      
-      // ML Kit 바코드 스캔 - null 체크 강화
-      List<Barcode>? barcodes;
-      try {
-        barcodes = await _barcodeScanner!.processImage(inputImage);
-      } catch (e) {
-        print('❌ ML Kit 바코드 처리 오류: $e');
-        // 스캐너 재초기화 시도
-        print('🔄 바코드 스캐너 재초기화 시도...');
+      // 바코드 스캐너 null 체크
+      if (_barcodeScanner == null) {
         _initializeBarcodeScanner();
-        return;
+        if (_barcodeScanner == null) return;
       }
       
-      // ML Kit 처리 후에도 상태 재확인
-      if (_isNavigatingAway || !_isWidgetActive) {
-        print('🚫 바코드 스캔 완료 후 상태 변경 감지, 결과 무시');
-        return;
-      }
+      // InputImage 생성
+      final inputImage = _createOptimizedInputImageSafe(cameraImage);
+      if (inputImage == null) return;
       
-      if (barcodes == null) {
-        print('❌ 바코드 스캔 결과가 null');
-        return;
-      }
+      // ML Kit 바코드 스캔
+      final barcodes = await _barcodeScanner!.processImage(inputImage);
       
-      print('📦 감지된 바코드 수: ${barcodes.length}');
+      // 처리 후 상태 재확인
+      if (_isNavigatingAway || !_isWidgetActive) return;
       
       if (barcodes.isNotEmpty && _onBarcodeDetected != null) {
         final barcode = barcodes.first;
         if (barcode.rawValue != null && barcode.rawValue!.isNotEmpty) {
-          // 강화된 중복 체크
+          // 중복 체크
           if (_lastDetectedBarcode == barcode.rawValue) {
             final timeSinceLastSuccess = now.difference(_lastBarcodeSuccessTime ?? DateTime(2000)).inMilliseconds;
             if (timeSinceLastSuccess < _barcodeSkipDuration) {
-              print('🔄 동일한 바코드 감지, 스킵: ${barcode.rawValue} (${timeSinceLastSuccess}ms 전 인식)');
               return;
             }
           }
           
-          // 최종 상태 체크 (콜백 호출 직전)
-          if (_isNavigatingAway || !_isWidgetActive) {
-            print('🚫 콜백 호출 직전 상태 변경 감지, 무시');
-            return;
-          }
+          // 최종 상태 체크
+          if (_isNavigatingAway || !_isWidgetActive) return;
           
-          print('📦 새로운 바코드 감지: ${barcode.rawValue} (위젯: $_currentWidgetId)');
+          print('📦 독립적 바코드 감지: ${barcode.rawValue}');
           
-          // 즉시 모든 인식 차단 (추론 프로세스 포함)
+          // 즉시 모든 인식 차단
           _emergencyStopAllDetection();
           
           // 성공 정보 저장
@@ -442,28 +613,507 @@ class CameraManager {
           // 성공 진동 실행
           await _vibrateSuccess();
           
-          print('🚀 바코드 콜백 호출: ${barcode.rawValue}');
           _onBarcodeDetected!(barcode.rawValue!);
         }
       }
       
     } catch (e) {
-      print('❌ 바코드 인식 오류: $e');
-      print('❌ 오류 스택트레이스: ${StackTrace.current}');
-      
-      // 오류 발생 시에도 상태 체크
-      if (_isNavigatingAway || !_isWidgetActive) {
-        print('🚫 비활성 상태에서 오류 발생, 무시');
-        return;
+      print('❌ 독립적 바코드 인식 오류: $e');
+      if (!_isNavigatingAway) {
+        _initializeBarcodeScanner();
       }
-      
-      // 바코드 스캐너 재초기화 시도
-      print('🔄 오류 복구를 위한 바코드 스캐너 재초기화...');
-      _initializeBarcodeScanner();
-      
     } finally {
       _isBarcodeDetectionRunning = false;
     }
+  }
+
+  /// 큐에서 YOLO 처리 (완전 독립적)
+  Future<void> _processYOLOFromQueue(CameraImage cameraImage) async {
+    if (_isYOLODetectionRunning || _isNavigatingAway) return;
+    
+    _isYOLODetectionRunning = true;
+    
+    try {
+      // Step 1: 백그라운드에서 이미지 전처리
+      final preprocessedData = await compute(_preprocessYOLOInIsolate, YOLOPreprocessData(
+        cameraImage: cameraImage,
+        inputSize: _inputSize,
+      ));
+      
+      if (preprocessedData == null || _isNavigatingAway || !_isWidgetActive) {
+        return;
+      }
+      
+      // Step 2: 메인 스레드에서 TensorFlow Lite 추론
+      await _performYOLOInferenceOptimized(preprocessedData);
+      
+    } catch (e) {
+      print('❌ 독립적 YOLO 처리 오류: $e');
+    } finally {
+      _isYOLODetectionRunning = false;
+    }
+  }
+
+  /// 백그라운드 바코드 인식 (메인 스레드 비동기 처리로 변경)
+  void _detectBarcodeInBackground(CameraImage cameraImage) {
+    if (_isBarcodeDetectionRunning || _isNavigatingAway) return;
+    
+    _isBarcodeDetectionRunning = true;
+    
+    // ML Kit은 Isolate에서 사용할 수 없으므로 메인 스레드에서 비동기 처리
+    Future.microtask(() async {
+      try {
+        // 상태 체크
+        if (_isNavigatingAway || !_isWidgetActive) {
+          print('🚫 위젯 비활성 상태, 바코드 처리 중단');
+          return;
+        }
+        
+        final now = DateTime.now();
+        
+        // 네비게이션 쿨다운 체크
+        if (_lastNavigationTime != null) {
+          final timeSinceNavigation = now.difference(_lastNavigationTime!).inMilliseconds;
+          if (timeSinceNavigation < _navigationCooldown) {
+            print('🚫 네비게이션 쿨다운 중 (${timeSinceNavigation}ms/${_navigationCooldown}ms)');
+            return;
+          }
+        }
+        
+        // 중복 바코드 스킵 체크
+        if (_lastDetectedBarcode != null && _lastBarcodeSuccessTime != null) {
+          final timeSinceLastDetection = now.difference(_lastBarcodeSuccessTime!).inMilliseconds;
+          if (timeSinceLastDetection < _barcodeSkipDuration) {
+            print('🚫 중복 바코드 스킵 (${timeSinceLastDetection}ms/${_barcodeSkipDuration}ms)');
+            return;
+          }
+        }
+        
+        // 바코드 스캐너 null 체크
+        if (_barcodeScanner == null) {
+          print('❌ 바코드 스캐너가 null입니다. 재초기화 시도...');
+          _initializeBarcodeScanner();
+          if (_barcodeScanner == null) {
+            print('❌ 바코드 스캐너 재초기화 실패');
+            return;
+          }
+        }
+        
+        // InputImage 생성
+        final inputImage = _createOptimizedInputImageSafe(cameraImage);
+        if (inputImage == null) {
+          print('❌ 최적화된 InputImage 생성 실패');
+          return;
+        }
+        
+        // 상태 재체크
+        if (_isNavigatingAway || !_isWidgetActive) {
+          print('🚫 InputImage 생성 후 상태 변경 감지, 중단');
+          return;
+        }
+        
+        print('📷 비동기 바코드 스캔 실행 중... (위젯: $_currentWidgetId)');
+        
+        // ML Kit 바코드 스캔
+        List<Barcode>? barcodes;
+        try {
+          barcodes = await _barcodeScanner!.processImage(inputImage);
+        } catch (e) {
+          print('❌ ML Kit 바코드 처리 오류: $e');
+          _initializeBarcodeScanner();
+          return;
+        }
+        
+        // 처리 후 상태 재확인
+        if (_isNavigatingAway || !_isWidgetActive) {
+          print('🚫 바코드 스캔 완료 후 상태 변경 감지, 결과 무시');
+          return;
+        }
+        
+        if (barcodes == null) {
+          print('❌ 바코드 스캔 결과가 null');
+          return;
+        }
+        
+        print('📦 감지된 바코드 수: ${barcodes.length}');
+        
+        if (barcodes.isNotEmpty && _onBarcodeDetected != null) {
+          final barcode = barcodes.first;
+          if (barcode.rawValue != null && barcode.rawValue!.isNotEmpty) {
+            // 중복 체크
+            if (_lastDetectedBarcode == barcode.rawValue) {
+              final timeSinceLastSuccess = now.difference(_lastBarcodeSuccessTime ?? DateTime(2000)).inMilliseconds;
+              if (timeSinceLastSuccess < _barcodeSkipDuration) {
+                print('🔄 동일한 바코드 감지, 스킵: ${barcode.rawValue} (${timeSinceLastSuccess}ms 전 인식)');
+                return;
+              }
+            }
+            
+            // 최종 상태 체크
+            if (_isNavigatingAway || !_isWidgetActive) {
+              print('🚫 콜백 호출 직전 상태 변경 감지, 무시');
+              return;
+            }
+            
+            print('📦 새로운 바코드 감지: ${barcode.rawValue} (위젯: $_currentWidgetId)');
+            
+            // 즉시 모든 인식 차단
+            _emergencyStopAllDetection();
+            
+            // 성공 정보 저장
+            _lastDetectedBarcode = barcode.rawValue;
+            _lastBarcodeSuccessTime = now;
+            
+            // 성공 진동 실행
+            await _vibrateSuccess();
+            
+            print('🚀 바코드 콜백 호출: ${barcode.rawValue}');
+            _onBarcodeDetected!(barcode.rawValue!);
+          }
+        }
+        
+      } catch (e) {
+        print('❌ 비동기 바코드 인식 오류: $e');
+        if (_isNavigatingAway) {
+          print('🚫 화면 전환 중 바코드 오류 발생, 무시');
+          return;
+        }
+        
+        // 바코드 스캐너 재초기화 시도
+        print('🔄 오류 복구를 위한 바코드 스캐너 재초기화...');
+        _initializeBarcodeScanner();
+        
+      } finally {
+        _isBarcodeDetectionRunning = false;
+      }
+    });
+  }
+
+  /// 안전한 최적화된 InputImage 생성 (null 체크 강화)
+  InputImage? _createOptimizedInputImageSafe(CameraImage cameraImage) {
+    try {
+      if (_cameraController == null) {
+        print('❌ 카메라 컨트롤러가 null');
+        return null;
+      }
+      
+      final camera = _cameraController!.description;
+      
+      // 회전값 설정
+      InputImageRotation rotation = InputImageRotation.rotation0deg;
+      switch (camera.sensorOrientation) {
+        case 90:
+          rotation = InputImageRotation.rotation90deg;
+          break;
+        case 180:
+          rotation = InputImageRotation.rotation180deg;
+          break;
+        case 270:
+          rotation = InputImageRotation.rotation270deg;
+          break;
+      }
+      
+      // 간단한 방법으로 InputImage 생성 (첫 번째 plane만 사용)
+      if (cameraImage.planes.isNotEmpty) {
+        return InputImage.fromBytes(
+          bytes: cameraImage.planes[0].bytes,
+          metadata: InputImageMetadata(
+            size: Size(cameraImage.width.toDouble(), cameraImage.height.toDouble()),
+            rotation: rotation,
+            format: InputImageFormat.nv21, // Android 기본
+            bytesPerRow: cameraImage.planes[0].bytesPerRow,
+          ),
+        );
+      }
+      
+      print('❌ CameraImage planes가 비어있음');
+      return null;
+      
+    } catch (e) {
+      print('❌ InputImage 생성 실패: $e');
+      return null;
+    }
+  }
+
+  /// 비동기 YOLO 인식 (전처리 + 추론 분리)
+  void _detectYOLOAsync(CameraImage cameraImage) {
+    if (_isYOLODetectionRunning || _isNavigatingAway) return;
+    
+    _isYOLODetectionRunning = true;
+    
+    // Step 1: 백그라운드에서 이미지 전처리
+    compute(_preprocessYOLOInIsolate, YOLOPreprocessData(
+      cameraImage: cameraImage,
+      inputSize: _inputSize,
+    )).then((preprocessedData) {
+      if (preprocessedData == null || _isNavigatingAway || !_isWidgetActive) {
+        _isYOLODetectionRunning = false;
+        return;
+      }
+      
+      // Step 2: 메인 스레드에서 TensorFlow Lite 추론 (프레임 스킵)
+      _performYOLOInferenceOptimized(preprocessedData);
+      
+    }).catchError((error) {
+      print('❌ YOLO 전처리 오류: $error');
+      _isYOLODetectionRunning = false;
+    });
+  }
+
+  /// 최적화된 YOLO 추론 (메인 스레드, 프레임 스킵)
+  Future<void> _performYOLOInferenceOptimized(YOLOPreprocessResult preprocessedData) async {
+    try {
+      if (_yoloInterpreter == null || _isNavigatingAway || !_isWidgetActive) {
+        return;
+      }
+      
+      print('🤖 YOLO 추론 실행 중... (크기: ${preprocessedData.inputTensor.length})');
+      
+      // TensorFlow Lite 추론 실행
+      final outputs = await _runYOLOInference(preprocessedData.inputTensor);
+      if (outputs == null || _isNavigatingAway) {
+        return;
+      }
+      
+      // 후처리 (NMS, 좌표 변환)
+      final detections = _postProcessYOLOOutput(
+        outputs, 
+        preprocessedData.originalWidth, 
+        preprocessedData.originalHeight
+      );
+      
+      // 결과 콜백
+      if (!_isNavigatingAway && _isWidgetActive && _onYOLODetected != null) {
+        if (detections.isNotEmpty) {
+          print('🎯 YOLO 탐지 성공: ${detections.length}개 객체');
+          _onYOLODetected!(detections);
+        }
+      }
+      
+    } catch (e) {
+      print('❌ YOLO 추론 오류: $e');
+    } finally {
+      _isYOLODetectionRunning = false;
+    }
+  }
+
+  /// TensorFlow Lite YOLO 추론 실행
+  Future<List<List<double>>?> _runYOLOInference(Float32List inputTensor) async {
+    try {
+      // 입력 텐서 준비 (NHWC 형식: [1, 768, 768, 3])
+      final input = _reshapeInput(inputTensor, [1, _inputSize, _inputSize, 3]);
+      
+      // 출력 텐서 준비
+      final outputTensor = _yoloInterpreter!.getOutputTensor(0);
+      final outputShape = outputTensor.shape;
+      
+      // 동적 출력 텐서 생성
+      late List output;
+      
+      if (outputShape.length == 3) {
+        output = List.generate(outputShape[0], (_) => 
+          List.generate(outputShape[1], (_) => 
+            List.filled(outputShape[2], 0.0)
+          )
+        );
+      } else {
+        throw Exception('지원하지 않는 출력 텐서 차원: ${outputShape.length}');
+      }
+      
+      // 추론 실행
+      _yoloInterpreter!.run(input, output);
+      
+      // 출력 변환: [1, Features, Detections] → [Detections, Features]
+      List<List<double>> formattedOutput = [];
+      
+      if (outputShape.length == 3) {
+        final numFeatures = outputShape[1];
+        final numDetections = outputShape[2];
+        
+        for (int i = 0; i < numDetections; i++) {
+          List<double> detection = [];
+          for (int j = 0; j < numFeatures; j++) {
+            detection.add((output[0][j][i] as num).toDouble());
+          }
+          formattedOutput.add(detection);
+        }
+      }
+      
+      return formattedOutput;
+      
+    } catch (e) {
+      print('❌ TensorFlow Lite 추론 실행 실패: $e');
+      return null;
+    }
+  }
+
+  /// 입력 텐서 재구성
+  List _reshapeInput(Float32List input, List<int> shape) {
+    List<List<List<List<double>>>> reshaped = [];
+    
+    int index = 0;
+    for (int n = 0; n < shape[0]; n++) {
+      List<List<List<double>>> batch = [];
+      for (int h = 0; h < shape[1]; h++) {
+        List<List<double>> row = [];
+        for (int w = 0; w < shape[2]; w++) {
+          List<double> pixel = [];
+          for (int c = 0; c < shape[3]; c++) {
+            pixel.add(input[index++]);
+          }
+          row.add(pixel);
+        }
+        batch.add(row);
+      }
+      reshaped.add(batch);
+    }
+    
+    return reshaped;
+  }
+
+  /// YOLO 출력 후처리
+  List<YOLODetection> _postProcessYOLOOutput(
+    List<List<double>> outputs, 
+    int originalWidth, 
+    int originalHeight
+  ) {
+    try {
+      List<YOLODetection> detections = [];
+      
+      if (outputs.isEmpty) return detections;
+      
+      final int numFeatures = outputs[0].length;
+      final int numClasses = numFeatures - 4;
+      
+      if (numClasses <= 0) return detections;
+      
+      final int actualNumClasses = math.min(numClasses, _classNames?.length ?? numClasses);
+      
+      for (final detection in outputs) {
+        if (detection.length < 4 + actualNumClasses) continue;
+        
+        final double centerX = detection[0];
+        final double centerY = detection[1];
+        final double width = detection[2];
+        final double height = detection[3];
+        
+        // 최대 신뢰도 클래스 찾기
+        double maxConfidence = 0.0;
+        int bestClassId = 0;
+        
+        for (int i = 0; i < actualNumClasses; i++) {
+          if (detection[4 + i] > maxConfidence) {
+            maxConfidence = detection[4 + i];
+            bestClassId = i;
+          }
+        }
+        
+        // 신뢰도 임계값 체크
+        if (maxConfidence >= _confidenceThreshold) {
+          String className = 'unknown';
+          if (_classNames != null && bestClassId < _classNames!.length) {
+            className = _classNames![bestClassId];
+          } else {
+            className = 'pill_type_${bestClassId + 1}';
+          }
+          
+          // 좌표 변환
+          final double scaledX = (centerX / _inputSize) * originalWidth;
+          final double scaledY = (centerY / _inputSize) * originalHeight;
+          final double scaledWidth = (width / _inputSize) * originalWidth;
+          final double scaledHeight = (height / _inputSize) * originalHeight;
+          
+          detections.add(YOLODetection(
+            bbox: BoundingBox(
+              x: scaledX - scaledWidth / 2,
+              y: scaledY - scaledHeight / 2,
+              width: scaledWidth,
+              height: scaledHeight,
+            ),
+            className: className,
+            confidence: maxConfidence,
+            classId: bestClassId,
+          ));
+        }
+      }
+      
+      // NMS 적용
+      detections = _applyNMS(detections, _iouThreshold);
+      
+      return detections;
+      
+    } catch (e) {
+      print('❌ YOLO 후처리 실패: $e');
+      return [];
+    }
+  }
+
+  /// NMS 적용
+  List<YOLODetection> _applyNMS(List<YOLODetection> detections, double iouThreshold) {
+    if (detections.isEmpty) return [];
+    
+    detections.sort((a, b) => b.confidence.compareTo(a.confidence));
+    
+    List<YOLODetection> nmsResults = [];
+    List<bool> suppressed = List.filled(detections.length, false);
+    
+    for (int i = 0; i < detections.length; i++) {
+      if (suppressed[i]) continue;
+      
+      nmsResults.add(detections[i]);
+      
+      for (int j = i + 1; j < detections.length; j++) {
+        if (suppressed[j]) continue;
+        
+        final double iou = _calculateIoU(detections[i].bbox, detections[j].bbox);
+        if (iou > iouThreshold) {
+          suppressed[j] = true;
+        }
+      }
+    }
+    
+    return nmsResults;
+  }
+
+  /// IoU 계산
+  double _calculateIoU(BoundingBox box1, BoundingBox box2) {
+    final double intersectionX = math.max(box1.x, box2.x);
+    final double intersectionY = math.max(box1.y, box2.y);
+    final double intersectionWidth = math.max(0, math.min(box1.x + box1.width, box2.x + box2.width) - intersectionX);
+    final double intersectionHeight = math.max(0, math.min(box1.y + box1.height, box2.y + box2.height) - intersectionY);
+    
+    final double intersectionArea = intersectionWidth * intersectionHeight;
+    final double box1Area = box1.width * box1.height;
+    final double box2Area = box2.width * box2.height;
+    final double unionArea = box1Area + box2Area - intersectionArea;
+    
+    return unionArea > 0 ? intersectionArea / unionArea : 0.0;
+  }
+
+  /// 바코드 결과 처리 (메인 스레드) - 단순화
+  void _handleBarcodeResult(String barcodeValue) async {
+    final now = DateTime.now();
+    
+    // 최종 상태 체크
+    if (_isNavigatingAway || !_isWidgetActive) {
+      print('🚫 바코드 결과 처리 시 상태 변경 감지, 무시');
+      return;
+    }
+    
+    print('📦 바코드 감지 완료: $barcodeValue (위젯: $_currentWidgetId)');
+    
+    // 즉시 모든 인식 차단
+    _emergencyStopAllDetection();
+    
+    // 성공 정보 저장
+    _lastDetectedBarcode = barcodeValue;
+    _lastBarcodeSuccessTime = now;
+    
+    // 성공 진동 실행
+    await _vibrateSuccess();
+    
+    print('🚀 바코드 콜백 호출: $barcodeValue');
+    _onBarcodeDetected?.call(barcodeValue);
   }
 
   /// 긴급 모든 인식 중단 (바코드 인식 성공 시 즉시 호출)
@@ -474,9 +1124,9 @@ class CameraManager {
     _isNavigatingAway = true;
     _isWidgetActive = false; // 위젯도 비활성화
     _lastNavigationTime = DateTime.now();
-    _isPillDetectionActive = false;
+    _isYOLODetectionActive = false;
     _isBarcodeDetectionActive = false;
-    _isPillDetectionRunning = false;
+    _isYOLODetectionRunning = false;
     _isBarcodeDetectionRunning = false;
     
     // 이미지 스트림도 즉시 중단
@@ -491,128 +1141,6 @@ class CameraManager {
     }
     
     print('✅ 모든 추론 프로세스 긴급 중단 완료');
-  }
-
-  /// 안전한 최적화된 InputImage 생성 (null 체크 강화)
-  InputImage? _createOptimizedInputImageSafe(CameraImage cameraImage) {
-    try {
-      // 카메라 컨트롤러 null 체크
-      if (_cameraController == null) {
-        print('❌ 카메라 컨트롤러가 null');
-        return null;
-      }
-      
-      // 원본 이미지가 너무 크면 다운샘플링
-      final originalWidth = cameraImage.width;
-      final originalHeight = cameraImage.height;
-      
-      print('📐 원본 크기: ${originalWidth}x${originalHeight}');
-      
-      // 바코드 인식에는 480p 정도면 충분
-      const int maxWidth = 640;
-      const int maxHeight = 480;
-      
-      if (originalWidth <= maxWidth && originalHeight <= maxHeight) {
-        // 원본 크기가 작으면 그대로 사용
-        return _cameraImageToInputImageSafe(cameraImage);
-      }
-      
-      // 다운샘플링이 필요한 경우 (여기서는 단순히 원본 사용)
-      // 실제 구현에서는 이미지 리사이즈 로직 추가 가능
-      print('📐 원본 크기 사용: ${originalWidth}x${originalHeight}');
-      
-      return _cameraImageToInputImageSafe(cameraImage);
-      
-    } catch (e) {
-      print('❌ 안전한 최적화된 InputImage 생성 실패: $e');
-      return null;
-    }
-  }
-
-  /// 안전한 CameraImage를 InputImage로 변환 (null 체크 강화)
-  InputImage? _cameraImageToInputImageSafe(CameraImage cameraImage) {
-    try {
-      // CameraImage 유효성 검사
-      if (cameraImage.planes.isEmpty) {
-        print('❌ CameraImage planes가 비어있음');
-        return null;
-      }
-      
-      // 카메라 컨트롤러 null 체크
-      if (_cameraController == null) {
-        print('❌ 카메라 컨트롤러가 null (InputImage 변환)');
-        return null;
-      }
-      
-      // CameraImage 메타데이터 설정
-      final camera = _cameraController!.description;
-      
-      // 회전 각도 계산
-      final sensorOrientation = camera.sensorOrientation;
-      InputImageRotation? rotation;
-      
-      switch (sensorOrientation) {
-        case 0:
-          rotation = InputImageRotation.rotation0deg;
-          break;
-        case 90:
-          rotation = InputImageRotation.rotation90deg;
-          break;
-        case 180:
-          rotation = InputImageRotation.rotation180deg;
-          break;
-        case 270:
-          rotation = InputImageRotation.rotation270deg;
-          break;
-        default:
-          rotation = InputImageRotation.rotation0deg;
-      }
-      
-      // InputImageFormat 설정 - null 체크 추가
-      final format = InputImageFormatValue.fromRawValue(cameraImage.format.raw);
-      if (format == null) {
-        print('❌ InputImageFormat이 null: ${cameraImage.format.raw}');
-        return null;
-      }
-      
-      // 첫 번째 plane null 체크
-      if (cameraImage.planes.first.bytes.isEmpty) {
-        print('❌ CameraImage bytes가 비어있음');
-        return null;
-      }
-      
-      // InputImageMetadata 생성
-      final inputImageData = InputImageMetadata(
-        size: Size(cameraImage.width.toDouble(), cameraImage.height.toDouble()),
-        rotation: rotation,
-        format: format,
-        bytesPerRow: cameraImage.planes.first.bytesPerRow,
-      );
-      
-      // 모든 plane의 bytes 결합 - null 체크 강화
-      final allBytes = WriteBuffer();
-      for (final plane in cameraImage.planes) {
-        if (plane.bytes.isNotEmpty) {
-          allBytes.putUint8List(plane.bytes);
-        }
-      }
-      
-      final bytes = allBytes.done().buffer.asUint8List();
-      if (bytes.isEmpty) {
-        print('❌ 결합된 bytes가 비어있음');
-        return null;
-      }
-      
-      return InputImage.fromBytes(
-        bytes: bytes,
-        metadata: inputImageData,
-      );
-      
-    } catch (e) {
-      print('❌ 안전한 InputImage 변환 실패: $e');
-      print('❌ 변환 오류 스택트레이스: ${StackTrace.current}');
-      return null;
-    }
   }
 
   /// 성공 진동 (Android 호환성 개선)
@@ -637,395 +1165,23 @@ class CameraManager {
     }
   }
 
-  /// TensorFlow Lite 알약 인식 (최적화된 버전)
-  Future<void> _detectPill(CameraImage cameraImage) async {
-    if (_isPillDetectionRunning || _pillModel == null) return;
-    
-    // 화면 전환 중이면 즉시 종료
-    if (_isNavigatingAway) {
-      print('🚫 화면 전환 중이므로 알약 인식 완전 중단');
-      return;
-    }
-    
-    _isPillDetectionRunning = true;
-    
-    try {
-      print('🔍 알약 인식 시작 (최적화됨)');
-      
-      // 전처리 중에도 화면 전환 상태 체크
-      if (_isNavigatingAway) {
-        print('🚫 전처리 시작 전 화면 전환 감지, 중단');
-        return;
-      }
-      
-      // 더 작은 이미지로 전처리 (속도 향상)
-      final inputData = await _preprocessCameraImageOptimized(cameraImage);
-      
-      // 전처리 후에도 화면 전환 상태 체크
-      if (_isNavigatingAway) {
-        print('🚫 전처리 완료 후 화면 전환 감지, 중단');
-        return;
-      }
-      
-      if (inputData != null) {
-        print('✅ 최적화된 전처리 완료, TensorFlow Lite 추론 시작');
-        
-        try {
-          // 추론 시작 전 마지막 체크
-          if (_isNavigatingAway) {
-            print('🚫 TensorFlow Lite 추론 시작 전 화면 전환 감지, 중단');
-            return;
-          }
-          
-          // TensorFlow Lite 추론
-          final outputData = await _runTFLiteInference(inputData);
-          
-          // 추론 완료 후에도 화면 전환 상태 체크
-          if (_isNavigatingAway) {
-            print('🚫 TensorFlow Lite 추론 완료 후 화면 전환 감지, 결과 무시');
-            return;
-          }
-          
-          if (outputData != null) {
-            final result = _processPredictionSafe(outputData);
-            
-            // 결과 처리 후에도 화면 전환 상태 체크
-            if (_isNavigatingAway) {
-              print('🚫 결과 처리 후 화면 전환 감지, 콜백 무시');
-              return;
-            }
-            
-            if (result != null && _onPillDetected != null) {
-              print('🎯 알약 인식 성공: ${result.className} (${(result.confidence * 100).toStringAsFixed(1)}%)');
-              _onPillDetected!(result);
-            } else {
-              print('📉 신뢰도 부족 또는 인식 실패');
-            }
-          } else {
-            print('❌ TensorFlow Lite 추론 결과가 null');
-          }
-          
-        } catch (tfliteError) {
-          print('❌ TensorFlow Lite 추론 오류: $tfliteError');
-          // 오류 시에도 화면 전환 상태면 무시
-          if (_isNavigatingAway) {
-            print('🚫 화면 전환 중 추론 오류 발생, 무시');
-            return;
-          }
-        }
-        
-      } else {
-        print('❌ 최적화된 전처리 실패');
-      }
-      
-    } catch (e) {
-      print('❌ 알약 인식 전체 오류: $e');
-      // 화면 전환 중 오류는 무시
-      if (_isNavigatingAway) {
-        print('🚫 화면 전환 중 전체 오류 발생, 무시');
-        return;
-      }
-    } finally {
-      _isPillDetectionRunning = false;
-    }
-  }
-
-  /// 최적화된 CameraImage 전처리 (더 빠른 처리)
-  Future<Float32List?> _preprocessCameraImageOptimized(CameraImage cameraImage) async {
-    try {
-      // 모델 정보 확인
-      final targetWidth = _modelInfo!['input_width'] as int? ?? 224;
-      final targetHeight = _modelInfo!['input_height'] as int? ?? 224;
-      
-      // 작은 타겟 크기로 설정 (속도 향상)
-      final optimizedWidth = math.min(targetWidth, 224);
-      final optimizedHeight = math.min(targetHeight, 224);
-      
-      print('🔍 최적화된 전처리 시작 - 타겟: ${optimizedWidth}x${optimizedHeight}');
-      
-      // Y 채널만 사용 (더 빠른 처리)
-      final yBytes = cameraImage.planes[0].bytes;
-      
-      // 최적화된 Float32List 생성
-      final inputData = _convertToFloat32ListOptimized(
-        yBytes, 
-        cameraImage.width, 
-        cameraImage.height, 
-        optimizedWidth, 
-        optimizedHeight,
-      );
-      
-      print('✅ 최적화된 전처리 완료 - 크기: ${inputData.length}');
-      return inputData;
-      
-    } catch (e) {
-      print('❌ 최적화된 전처리 실패: $e');
-      return null;
-    }
-  }
-
-  /// 최적화된 Float32List 변환 (더 빠른 처리)
-  Float32List _convertToFloat32ListOptimized(
-    Uint8List yData,
-    int originalWidth,
-    int originalHeight,
-    int targetWidth,
-    int targetHeight,
-  ) {
-    // ImageNet 정규화 값 (기본값 사용으로 속도 향상)
-    final mean = [0.485, 0.456, 0.406];
-    final std = [0.229, 0.224, 0.225];
-    
-    // Float32List 생성
-    final inputData = Float32List(targetWidth * targetHeight * 3);
-    
-    final scaleX = originalWidth / targetWidth;
-    final scaleY = originalHeight / targetHeight;
-    
-    int index = 0;
-    
-    // 간소화된 리샘플링 (속도 우선)
-    for (int c = 0; c < 3; c++) {
-      for (int y = 0; y < targetHeight; y += 2) { // 2픽셀씩 건너뛰어 속도 향상
-        for (int x = 0; x < targetWidth; x += 2) {
-          final sourceX = (x * scaleX).toInt().clamp(0, originalWidth - 1);
-          final sourceY = (y * scaleY).toInt().clamp(0, originalHeight - 1);
-          final sourceIndex = sourceY * originalWidth + sourceX;
-          
-          // 빠른 정규화
-          double normalizedValue = -1.0; // 기본값
-          if (sourceIndex < yData.length) {
-            final pixelValue = yData[sourceIndex];
-            normalizedValue = (pixelValue / 255.0 - mean[c]) / std[c];
-          }
-          
-          // 4개 픽셀에 같은 값 적용 (속도 향상)
-          if (index < inputData.length) inputData[index++] = normalizedValue;
-          if (index < inputData.length) inputData[index++] = normalizedValue;
-        }
-      }
-    }
-    
-    // 나머지 공간 채우기
-    while (index < inputData.length) {
-      inputData[index++] = -1.0;
-    }
-    
-    return inputData;
-  }
-
-  /// TensorFlow Lite 추론 실행
-  Future<List<double>?> _runTFLiteInference(Float32List inputData) async {
-    try {
-      // 입력 텐서 모양 가져오기
-      final inputTensor = _pillModel!.getInputTensors().first;
-      final outputTensor = _pillModel!.getOutputTensors().first;
-      
-      print('📊 입력 텐서 모양: ${inputTensor.shape}');
-      print('📊 출력 텐서 모양: ${outputTensor.shape}');
-      
-      // 입력 데이터를 올바른 모양으로 변환
-      final inputShape = inputTensor.shape;
-      final reshapedInput = inputData.reshape(inputShape);
-      
-      // 출력 버퍼 준비
-      final outputShape = outputTensor.shape;
-      final List<List<double>> outputData = List.generate(
-        outputShape[0], // 배치 크기 (보통 1)
-        (i) => List.filled(outputShape[1], 0.0) // 클래스 수
-      );
-      
-      // 추론 실행
-      _pillModel!.run(reshapedInput, outputData);
-      
-      print('📊 추론 결과 크기: ${outputData[0].length}');
-      print('📊 추론 결과 샘플: ${outputData[0].take(5).toList()}');
-      
-      // 첫 번째 배치의 결과 반환
-      return outputData[0];
-      
-    } catch (e) {
-      print('❌ TensorFlow Lite 추론 실행 실패: $e');
-      return null;
-    }
-  }
-
-  /// 안전한 예측 결과 처리 (Softmax + 엄격한 임계값)
-  PillClassificationResult? _processPredictionSafe(List<double> prediction) {
-    try {
-      print('🔍 예측 결과 처리 시작 - 타입: ${prediction.runtimeType}');
-      
-      print('📊 Raw logits: ${prediction.take(5).toList()}...'); // 처음 5개만 출력
-      
-      if (prediction.isNotEmpty) {
-        // Softmax 적용하여 확률로 변환
-        final probabilities = _applySoftmax(prediction);
-        print('📊 Softmax 적용 후: ${probabilities.take(5).toList()}...'); // 처음 5개만 출력
-        
-        final maxIndex = _getMaxIndex(probabilities);
-        final confidence = probabilities[maxIndex];
-        
-        print('📊 최고 신뢰도: ${(confidence * 100).toStringAsFixed(1)}% (인덱스: $maxIndex)');
-        
-        // 상위 2개 클래스 간 차이 확인 (추가 안전장치)
-        final sortedProbs = [...probabilities]..sort((a, b) => b.compareTo(a));
-        final confidenceDiff = sortedProbs[0] - sortedProbs[1];
-        print('📊 1위-2위 차이: ${(confidenceDiff * 100).toStringAsFixed(1)}%');
-        
-        // 엄격한 임계값: 90% 이상 + 1위와 2위 차이 20% 이상
-        if (confidence > 0.9 && confidenceDiff > 0.2 && maxIndex < _labels!.length) {
-          print('✅ 임계값 통과 - 알약 인식 확정');
-          return PillClassificationResult(
-            className: _labels![maxIndex],
-            confidence: confidence,
-            classIndex: maxIndex,
-          );
-        } else {
-          print('❌ 임계값 미달 - 신뢰도: ${(confidence * 100).toStringAsFixed(1)}%, 차이: ${(confidenceDiff * 100).toStringAsFixed(1)}%');
-        }
-      } else {
-        print('❌ prediction 배열이 비어있음');
-      }
-      
-    } catch (e) {
-      print('❌ 예측 결과 처리 실패: $e');
-      print('❌ 처리 오류 타입: ${e.runtimeType}');
-    }
-    
-    return null;
-  }
-
-  /// Softmax 함수 (안정성을 위해 최대값 빼기)
-  List<double> _applySoftmax(List<double> logits) {
-    if (logits.isEmpty) return [];
-    
-    // 수치 안정성을 위해 최대값 빼기
-    final maxLogit = logits.reduce((a, b) => a > b ? a : b);
-    final expValues = logits.map((x) => math.exp(x - maxLogit)).toList();
-    final sumExp = expValues.fold(0.0, (a, b) => a + b); // reduce 대신 fold 사용
-    
-    // 0으로 나누기 방지
-    if (sumExp == 0.0 || sumExp.isNaN || sumExp.isInfinite) {
-      return List.filled(logits.length, 1.0 / logits.length);
-    }
-    
-    // 안전한 나누기 연산
-    return expValues.map((x) {
-      final result = x / sumExp;
-      return result.isNaN || result.isInfinite ? 0.0 : result;
-    }).toList();
-  }
-
-  /// CameraImage 전처리 (Float32List 출력)
-  Future<Float32List?> _preprocessCameraImage(CameraImage cameraImage) async {
-    try {
-      print('🔍 전처리 시작 - 이미지 크기: ${cameraImage.width}x${cameraImage.height}');
-      
-      final int width = cameraImage.width;
-      final int height = cameraImage.height;
-      
-      // 모델 정보 확인
-      final targetWidth = _modelInfo!['input_width'] as int;
-      final targetHeight = _modelInfo!['input_height'] as int;
-      
-      print('🎯 타겟 크기: ${targetWidth}x${targetHeight}');
-      
-      // Y 채널(밝기)만 사용해서 Float32List로 변환
-      final yBytes = cameraImage.planes[0].bytes;
-      print('📊 Y 채널 크기: ${yBytes.length} bytes');
-      
-      // Float32List 생성 (0.0-1.0 범위)
-      final inputData = _convertToFloat32List(
-        yBytes, 
-        width, 
-        height, 
-        targetWidth, 
-        targetHeight,
-      );
-      
-      print('✅ 전처리 완료 - Float32List 크기: ${inputData.length}');
-      return inputData;
-      
-    } catch (e) {
-      print('❌ 전처리 실패: $e');
-      print('❌ 스택트레이스: ${StackTrace.current}');
-      return null;
-    }
-  }
-
-  /// Y 채널을 Float32List로 변환 (ImageNet 정규화 적용)
-  Float32List _convertToFloat32List(
-    Uint8List yData,
-    int originalWidth,
-    int originalHeight,
-    int targetWidth,
-    int targetHeight,
-  ) {
-    print('🔄 Float32List 변환 시작: ${originalWidth}x${originalHeight} → ${targetWidth}x${targetHeight}');
-    
-    // ImageNet 정규화 값 가져오기
-    final mean = (_modelInfo!['mean'] as List).cast<double>();
-    final std = (_modelInfo!['std'] as List).cast<double>();
-    print('📊 ImageNet 정규화 - mean: $mean, std: $std');
-    
-    // Float32List 생성 (targetWidth * targetHeight * 3)
-    final inputData = Float32List(targetWidth * targetHeight * 3);
-    
-    final scaleX = originalWidth / targetWidth;
-    final scaleY = originalHeight / targetHeight;
-    
-    int index = 0;
-    
-    // RGB 3채널로 처리
-    for (int c = 0; c < 3; c++) { // R, G, B
-      for (int y = 0; y < targetHeight; y++) {
-        for (int x = 0; x < targetWidth; x++) {
-          // 원본에서 샘플링
-          final sourceX = (x * scaleX).round().clamp(0, originalWidth - 1);
-          final sourceY = (y * scaleY).round().clamp(0, originalHeight - 1);
-          
-          final sourceIndex = sourceY * originalWidth + sourceX;
-          
-          // 안전한 접근 및 ImageNet 정규화 적용
-          double normalizedValue = (0.5 - mean[c]) / std[c]; // 기본값 (중간 회색)
-          if (sourceIndex < yData.length) {
-            final pixelValue = yData[sourceIndex];
-            // ImageNet 정규화: (픽셀값/255 - mean) / std
-            normalizedValue = (pixelValue / 255.0 - mean[c]) / std[c];
-          }
-          
-          inputData[index++] = normalizedValue;
-        }
-      }
-    }
-    
-    print('✅ Float32List 변환 완료 - 크기: ${inputData.length}');
-    print('📊 정규화 샘플 값: ${inputData.take(3).map((v) => v.toStringAsFixed(3)).toList()}');
-    return inputData;
-  }
-
-  /// 최대값 인덱스 찾기
-  int _getMaxIndex(List<double> scores) {
-    double maxScore = scores[0];
-    int maxIndex = 0;
-    
-    for (int i = 1; i < scores.length; i++) {
-      if (scores[i] > maxScore) {
-        maxScore = scores[i];
-        maxIndex = i;
-      }
-    }
-    
-    return maxIndex;
-  }
-
-  /// 인식 중지
+  /// 인식 중지 (타이머 정리 추가)
   void stopDetection() {
-    print('🛑 모든 인식 중지');
-    _isPillDetectionActive = false;
+    print('🛑 모든 인식 중지 (타이머 정리 포함)');
+    
+    // 타이머들 정리
+    _barcodeProcessingTimer?.cancel();
+    _yoloProcessingTimer?.cancel();
+    _barcodeProcessingTimer = null;
+    _yoloProcessingTimer = null;
+    
+    _isYOLODetectionActive = false;
     _isBarcodeDetectionActive = false;
-    _isPillDetectionRunning = false;
+    _isYOLODetectionRunning = false;
     _isBarcodeDetectionRunning = false;
+    
+    // 프레임 큐 정리
+    _frameQueue.clear();
     
     // 화면 전환 상태로 설정
     _isNavigatingAway = true;
@@ -1034,6 +1190,10 @@ class CameraManager {
     // 중복 방지 데이터 초기화
     _lastDetectedBarcode = null;
     _lastBarcodeSuccessTime = null;
+    _lastYOLODetectionTime = null;
+    _lastBarcodeDetectionTime = null;
+    _lastYOLODetectionTime = null;
+    _lastBarcodeDetectionTime = null;
     
     if (_isImageStreamActive) {
       _isImageStreamActive = false;
@@ -1093,9 +1253,9 @@ class CameraManager {
       _lastNavigationTime = null;
       _lastDetectedBarcode = null;
       _lastBarcodeSuccessTime = null;
-      _lastPillDetectionTime = null;
+      _lastYOLODetectionTime = null;
       _lastBarcodeDetectionTime = null;
-      _isPillDetectionRunning = false;
+      _isYOLODetectionRunning = false;
       _isBarcodeDetectionRunning = false;
       _isImageStreamActive = false;
       
@@ -1134,9 +1294,9 @@ class CameraManager {
     _lastNavigationTime = null;
     _lastDetectedBarcode = null;
     _lastBarcodeSuccessTime = null;
-    _lastPillDetectionTime = null;
+    _lastYOLODetectionTime = null;
     _lastBarcodeDetectionTime = null;
-    _isPillDetectionRunning = false;
+    _isYOLODetectionRunning = false;
     _isBarcodeDetectionRunning = false;
     print('✅ 모든 상태 강제 초기화 완료');
   }
@@ -1181,16 +1341,15 @@ class CameraManager {
     }
     
     try {
-      _pillModel?.close();
+      _yoloInterpreter?.close();
     } catch (e) {
-      print('⚠️ TensorFlow Lite 모델 정리 오류: $e');
+      print('⚠️ TensorFlow Lite 인터프리터 정리 오류: $e');
     }
     
-    _pillModel = null;
-    _labels = null;
-    _modelInfo = null;
+    _yoloInterpreter = null;
+    _classNames = null;
     _onBarcodeDetected = null;
-    _onPillDetected = null;
+    _onYOLODetected = null;
     
     // 중복 방지 데이터 정리
     _lastDetectedBarcode = null;
@@ -1206,80 +1365,239 @@ class CameraManager {
   }
 }
 
-/// 알약 분류 결과
-class PillClassificationResult {
-  final String className;
-  final double confidence;
-  final int classIndex;
-  
-  PillClassificationResult({
-    required this.className,
-    required this.confidence,
-    required this.classIndex,
-  });
-  
-  @override
-  String toString() => '$className (${(confidence * 100).toStringAsFixed(1)}%)';
-}
+// ================================================================================
+// Isolate 함수들 (YOLO 전처리용)
+// ================================================================================
 
-/// 카메라 초기화 결과
-class CameraInitResult {
-  final bool isSuccess;
-  final bool isPermissionDenied;
-  final String? errorMessage;
-
-  CameraInitResult._({
-    required this.isSuccess,
-    required this.isPermissionDenied,
-    this.errorMessage,
-  });
-
-  factory CameraInitResult.success() => CameraInitResult._(
-        isSuccess: true,
-        isPermissionDenied: false,
-      );
-
-  factory CameraInitResult.permissionDenied() => CameraInitResult._(
-        isSuccess: false,
-        isPermissionDenied: true,
-        errorMessage: '카메라 권한이 필요합니다.',
-      );
-
-  factory CameraInitResult.error(String message) => CameraInitResult._(
-        isSuccess: false,
-        isPermissionDenied: false,
-        errorMessage: message,
-      );
-
-  String getUserMessage() {
-    if (isSuccess) return '카메라가 준비되었습니다';
-    return errorMessage ?? '카메라 초기화에 실패했습니다';
-  }
-}
-
-// Float32List reshape 확장 메서드
-extension Float32ListReshape on Float32List {
-  List<List<List<List<double>>>> reshape(List<int> shape) {
-    if (shape.length != 4) {
-      throw ArgumentError('Shape must have 4 dimensions for NHWC format');
+/// YOLO 전처리 (Isolate에서 실행)
+Future<YOLOPreprocessResult?> _preprocessYOLOInIsolate(YOLOPreprocessData data) async {
+  try {
+    print('🔄 [Isolate] YOLO 전처리 시작');
+    
+    // CameraImage → RGB 변환
+    final rgbImage = _convertCameraImageToRGBInIsolate(data.cameraImage);
+    if (rgbImage == null) {
+      print('❌ [Isolate] RGB 변환 실패');
+      return null;
     }
     
-    final int n = shape[0]; // batch
-    final int h = shape[1]; // height  
-    final int w = shape[2]; // width
-    final int c = shape[3]; // channels
-    
-    final result = List.generate(n, (batch) =>
-      List.generate(h, (height) =>
-        List.generate(w, (width) =>
-          List.generate(c, (channel) {
-            final index = batch * h * w * c + height * w * c + width * c + channel;
-            return index < length ? this[index].toDouble() : 0.0;
-          })
-        )
-      )
+    // 리사이즈
+    final resizedImage = img.copyResize(
+      rgbImage,
+      width: data.inputSize,
+      height: data.inputSize,
+      interpolation: img.Interpolation.linear,
     );
     
-    return result;
+    // Float32List 변환
+    final inputTensor = _imageToTensorInIsolate(resizedImage);
+    
+    print('✅ [Isolate] YOLO 전처리 완료');
+    
+    return YOLOPreprocessResult(
+      inputTensor: inputTensor,
+      originalWidth: data.cameraImage.width,
+      originalHeight: data.cameraImage.height,
+    );
+    
+  } catch (e) {
+    print('❌ [Isolate] YOLO 전처리 오류: $e');
+    return null;
   }
+}
+
+/// Isolate에서 이미지를 텐서로 변환
+Float32List _imageToTensorInIsolate(img.Image image) {
+  final int width = image.width;
+  final int height = image.height;
+  final Float32List tensor = Float32List(height * width * 3);
+  
+  int index = 0;
+  
+  for (int y = 0; y < height; y++) {
+    for (int x = 0; x < width; x++) {
+      final pixel = image.getPixel(x, y);
+      tensor[index++] = pixel.r / 255.0; // R
+      tensor[index++] = pixel.g / 255.0; // G
+      tensor[index++] = pixel.b / 255.0; // B
+    }
+  }
+  
+  return tensor;
+}
+
+/// Isolate에서 CameraImage → RGB 변환
+img.Image? _convertCameraImageToRGBInIsolate(CameraImage cameraImage) {
+  try {
+    if (cameraImage.format.group == ImageFormatGroup.nv21) {
+      return _convertNV21ToRGBInIsolate(cameraImage);
+    } else if (cameraImage.format.group == ImageFormatGroup.yuv420) {
+      return _convertYUV420ToRGBInIsolate(cameraImage);
+    } else {
+      return _convertCameraImageFallbackInIsolate(cameraImage);
+    }
+  } catch (e) {
+    print('❌ [Isolate] RGB 변환 실패: $e');
+    return _convertCameraImageFallbackInIsolate(cameraImage);
+  }
+}
+
+/// Isolate에서 NV21 → RGB 변환
+img.Image? _convertNV21ToRGBInIsolate(CameraImage cameraImage) {
+  try {
+    final int width = cameraImage.width;
+    final int height = cameraImage.height;
+    
+    if (cameraImage.planes.isEmpty) return null;
+    
+    final Uint8List allBytes = cameraImage.planes[0].bytes;
+    final int yRowStride = cameraImage.planes[0].bytesPerRow;
+    final int ySize = width * height;
+    
+    if (allBytes.length < ySize) {
+      return _convertCameraImageFallbackInIsolate(cameraImage);
+    }
+    
+    final img.Image rgbImage = img.Image(width: width, height: height);
+    
+    for (int y = 0; y < height; y++) {
+      for (int x = 0; x < width; x++) {
+        final int yIndex = y * yRowStride + x;
+        if (yIndex >= allBytes.length) continue;
+        
+        final int yValue = allBytes[yIndex];
+        
+        // UV 값 읽기
+        final int uvRow = y ~/ 2;
+        final int uvCol = x ~/ 2;
+        final int uvIndex = ySize + uvRow * width + uvCol * 2;
+        
+        int uValue = 128;
+        int vValue = 128;
+        
+        if (uvIndex + 1 < allBytes.length) {
+          vValue = allBytes[uvIndex];
+          uValue = allBytes[uvIndex + 1];
+        } else if (uvIndex < allBytes.length) {
+          vValue = allBytes[uvIndex];
+        }
+        
+        // YUV → RGB 변환
+        final double yNorm = yValue.toDouble();
+        final double uNorm = uValue.toDouble() - 128.0;
+        final double vNorm = vValue.toDouble() - 128.0;
+        
+        final int r = _clampRGBInIsolate((yNorm + 1.402 * vNorm).round());
+        final int g = _clampRGBInIsolate((yNorm - 0.344 * uNorm - 0.714 * vNorm).round());
+        final int b = _clampRGBInIsolate((yNorm + 1.772 * uNorm).round());
+        
+        rgbImage.setPixelRgb(x, y, r, g, b);
+      }
+    }
+    
+    return rgbImage;
+  } catch (e) {
+    print('❌ [Isolate] NV21 변환 실패: $e');
+    return _convertCameraImageFallbackInIsolate(cameraImage);
+  }
+}
+
+/// Isolate에서 YUV420 → RGB 변환
+img.Image? _convertYUV420ToRGBInIsolate(CameraImage cameraImage) {
+  try {
+    final int width = cameraImage.width;
+    final int height = cameraImage.height;
+    
+    if (cameraImage.planes.length < 3) return null;
+    
+    final Uint8List yBytes = cameraImage.planes[0].bytes;
+    final Uint8List uBytes = cameraImage.planes[1].bytes;
+    final Uint8List vBytes = cameraImage.planes[2].bytes;
+    
+    final int yStride = cameraImage.planes[0].bytesPerRow;
+    final int uStride = cameraImage.planes[1].bytesPerRow;
+    final int vStride = cameraImage.planes[2].bytesPerRow;
+    
+    final img.Image rgbImage = img.Image(width: width, height: height);
+    
+    for (int y = 0; y < height; y++) {
+      for (int x = 0; x < width; x++) {
+        final int yIndex = y * yStride + x;
+        final int uvRow = y ~/ 2;
+        final int uvCol = x ~/ 2;
+        final int uIndex = uvRow * uStride + uvCol;
+        final int vIndex = uvRow * vStride + uvCol;
+        
+        if (yIndex < yBytes.length && uIndex < uBytes.length && vIndex < vBytes.length) {
+          final int yValue = yBytes[yIndex];
+          final int uValue = uBytes[uIndex];
+          final int vValue = vBytes[vIndex];
+          
+          // YUV → RGB 변환
+          final double yNorm = yValue.toDouble();
+          final double uNorm = uValue.toDouble() - 128.0;
+          final double vNorm = vValue.toDouble() - 128.0;
+          
+          final int r = _clampRGBInIsolate((yNorm + 1.402 * vNorm).round());
+          final int g = _clampRGBInIsolate((yNorm - 0.344 * uNorm - 0.714 * vNorm).round());
+          final int b = _clampRGBInIsolate((yNorm + 1.772 * uNorm).round());
+          
+          rgbImage.setPixelRgb(x, y, r, g, b);
+        }
+      }
+    }
+    
+    return rgbImage;
+  } catch (e) {
+    print('❌ [Isolate] YUV420 변환 실패: $e');
+    return null;
+  }
+}
+
+/// Isolate에서 폴백 변환
+img.Image? _convertCameraImageFallbackInIsolate(CameraImage cameraImage) {
+  try {
+    if (cameraImage.planes.isEmpty) return null;
+    
+    final int width = cameraImage.width;
+    final int height = cameraImage.height;
+    final Uint8List yBytes = cameraImage.planes[0].bytes;
+    final int yStride = cameraImage.planes[0].bytesPerRow;
+    
+    final img.Image rgbImage = img.Image(width: width, height: height);
+    
+    for (int y = 0; y < height; y++) {
+      for (int x = 0; x < width; x++) {
+        final int yIndex = y * yStride + x;
+        if (yIndex < yBytes.length) {
+          final int yValue = yBytes[yIndex];
+          rgbImage.setPixelRgb(x, y, yValue, yValue, yValue);
+        } else {
+          rgbImage.setPixelRgb(x, y, 0, 0, 0);
+        }
+      }
+    }
+    
+    return rgbImage;
+  } catch (e) {
+    print('❌ [Isolate] 폴백 변환 실패: $e');
+    return null;
+  }
+}
+
+/// Isolate에서 RGB 클램프
+int _clampRGBInIsolate(int value) {
+  return math.max(0, math.min(255, value));
+}
+
+/// 백그라운드에서 바코드 처리 (현재 사용하지 않음 - ML Kit Isolate 제한)
+Future<BarcodeProcessResult?> _processBarcodeInIsolate(BarcodeProcessData data) async {
+  // ML Kit은 Isolate에서 사용할 수 없으므로 더미 함수
+  return BarcodeProcessResult.failure('Isolate에서 ML Kit 사용 불가');
+}
+
+/// Isolate에서 InputImage 생성 (현재 사용하지 않음)
+InputImage? _createInputImageInIsolate(CameraImage cameraImage, CameraDescription cameraDescription) {
+  // 더미 함수
+  return null;
 }

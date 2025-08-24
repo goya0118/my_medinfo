@@ -30,6 +30,11 @@ android {
         versionName = flutter.versionName
     }
 
+    packagingOptions {
+        pickFirst("lib/armeabi-v7a/libtensorflowlite_gpu_delegate.so")
+        pickFirst("lib/arm64-v8a/libtensorflowlite_gpu_delegate.so")
+    }
+
     buildTypes {
         release {
             // TODO: Add your own signing config for the release build.
@@ -38,6 +43,7 @@ android {
         }
     }
 }
+
 
 flutter {
     source = "../.."

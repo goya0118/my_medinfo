@@ -6,7 +6,6 @@ import 'package:fluttertoast/fluttertoast.dart';
 import '../services/drug_api_service.dart';
 import '../models/drug_info.dart';
 import '../services/camera_manager.dart';
-import 'drug_info_screen.dart';
 import 'drug_detail_screen.dart'; // DrugInfoScreen 대신 DrugDetailScreen을 import
 
 class BarcodeScannerScreen extends StatefulWidget {
@@ -89,10 +88,10 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
 
         _startScanningVibration();
         
-        // 통합 인식 시작 (바코드 + 알약)
+        // 통합 인식 시작 (바코드 + YOLO 객체)
         _cameraManager.startDetection(
           onBarcodeDetected: _onBarcodeDetected,
-          onPillDetected: _onPillDetected,
+          onYOLODetected: _onYOLODetected, // 변경됨: onPillDetected → onYOLODetected
         );
         
       } else {
@@ -154,11 +153,15 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
     }
   }
 
-  // 알약 감지 처리
-  void _onPillDetected(PillClassificationResult? result) async {
-    if (result == null || !_isScanning || !mounted) return;
+  // YOLO 객체 감지 처리 (변경됨: 이제 List<YOLODetection>을 받음)
+  void _onYOLODetected(List<YOLODetection> detections) async {
+    if (detections.isEmpty || !_isScanning || !mounted) return;
 
-    print('알약 인식됨: ${result.className} (${result.confidence})');
+    // 가장 신뢰도가 높은 detection 선택
+    final bestDetection = detections.reduce((a, b) => 
+      a.confidence > b.confidence ? a : b);
+
+    print('YOLO 객체 인식됨: ${bestDetection.className} (${bestDetection.confidence})');
 
     // 성공 진동 및 스캔 중지
     _successVibration();
@@ -171,12 +174,12 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
         _isLoading = false;
       });
 
-      // 알약 결과 화면으로 이동
+      // YOLO 객체 결과 화면으로 이동
       Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (context) => PillInfoScreen(
-            pillResult: result,
+          builder: (context) => YOLODetectionScreen(
+            detections: detections,
             scanTime: DateTime.now(),
           ),
         ),
@@ -264,7 +267,7 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
         // 통합 인식 재시작
         _cameraManager.startDetection(
           onBarcodeDetected: _onBarcodeDetected,
-          onPillDetected: _onPillDetected,
+          onYOLODetected: _onYOLODetected, // 변경됨
         );
       }
     });
@@ -276,7 +279,7 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('카메라 권한 필요'),
-        content: const Text('바코드와 알약 인식을 위해 카메라 권한이 필요합니다.\n\n설정 > 개인정보 보호 및 보안 > 카메라에서 이 앱의 권한을 허용해주세요.'),
+        content: const Text('바코드와 객체 인식을 위해 카메라 권한이 필요합니다.\n\n설정 > 개인정보 보호 및 보안 > 카메라에서 이 앱의 권한을 허용해주세요.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -329,7 +332,7 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
               padding: const EdgeInsets.all(16),
               color: Colors.blue.shade50,
               child: Text(
-                '바코드나 알약을 카메라에 비춰주세요',
+                '바코드나 객체를 카메라에 비춰주세요',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 18, // 큰 글씨
@@ -471,7 +474,7 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
                               ? '❌ $_errorMessage'
                               : _cameraInitialized
                                   ? (_isScanning 
-                                      ? '🔍 바코드 또는 알약을 카메라에 비춰주세요'
+                                      ? '🔍 바코드 또는 객체를 카메라에 비춰주세요'
                                       : _isLoading
                                           ? '⏳ 의약품 정보를 조회하는 중...'
                                           : '✅ 인식 완료!')
@@ -502,9 +505,473 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
   }
 }
 
-// 알약 정보 화면 (기존과 동일)
+// YOLO 탐지 결과 화면 (새로 추가)
+class YOLODetectionScreen extends StatelessWidget {
+  final List<YOLODetection> detections;
+  final DateTime scanTime;
+
+  const YOLODetectionScreen({
+    super.key,
+    required this.detections,
+    required this.scanTime,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // 가장 신뢰도가 높은 detection 선택
+    final bestDetection = detections.reduce((a, b) => 
+      a.confidence > b.confidence ? a : b);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('🎯 객체 인식 결과'),
+        backgroundColor: Colors.blue.shade100,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => Navigator.pop(context),
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.share),
+            onPressed: () {
+              // TODO: 공유 기능
+            },
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 메인 detection 카드
+              Card(
+                elevation: 4,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // 객체명
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.blue.shade50,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Icon(
+                              Icons.center_focus_strong,
+                              color: Colors.blue.shade600,
+                              size: 24,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'YOLO 인식 결과',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color: Colors.grey,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  bestDetection.className,
+                                  style: const TextStyle(
+                                    fontSize: 22,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      
+                      const SizedBox(height: 20),
+                      
+                      // 신뢰도
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.green.shade50,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Icon(
+                              Icons.analytics,
+                              color: Colors.green.shade600,
+                              size: 20,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  '인식 신뢰도',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color: Colors.grey,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  '${(bestDetection.confidence * 100).toStringAsFixed(1)}%',
+                                  style: TextStyle(
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold,
+                                    color: bestDetection.confidence > 0.8 
+                                      ? Colors.green.shade700
+                                      : bestDetection.confidence > 0.6
+                                        ? Colors.orange.shade700
+                                        : Colors.red.shade700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      
+                      const SizedBox(height: 20),
+                      
+                      // 위치 정보
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.purple.shade50,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Icon(
+                              Icons.crop_free,
+                              color: Colors.purple.shade600,
+                              size: 20,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  '위치 정보',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color: Colors.grey,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'X: ${bestDetection.bbox.x.toStringAsFixed(0)}, Y: ${bestDetection.bbox.y.toStringAsFixed(0)}',
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w500,
+                                    fontFamily: 'monospace',
+                                  ),
+                                ),
+                                Text(
+                                  '크기: ${bestDetection.bbox.width.toStringAsFixed(0)} × ${bestDetection.bbox.height.toStringAsFixed(0)}',
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    color: Colors.grey,
+                                    fontFamily: 'monospace',
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              
+              const SizedBox(height: 16),
+              
+              // 모든 detection 목록 (여러 객체가 감지된 경우)
+              if (detections.length > 1) ...[
+                Card(
+                  elevation: 2,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.list,
+                              color: Colors.grey.shade600,
+                              size: 20,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              '모든 인식 결과 (${detections.length}개)',
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black87,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        
+                        ...detections.asMap().entries.map((entry) {
+                          final index = entry.key;
+                          final detection = entry.value;
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 24,
+                                  height: 24,
+                                  decoration: BoxDecoration(
+                                    color: detection == bestDetection 
+                                      ? Colors.blue.shade500 
+                                      : Colors.grey.shade300,
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Center(
+                                    child: Text(
+                                      '${index + 1}',
+                                      style: TextStyle(
+                                        color: detection == bestDetection 
+                                          ? Colors.white 
+                                          : Colors.grey.shade600,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    detection.className,
+                                    style: const TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ),
+                                Text(
+                                  '${(detection.confidence * 100).toStringAsFixed(1)}%',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w500,
+                                    color: detection.confidence > 0.8 
+                                      ? Colors.green.shade700
+                                      : Colors.orange.shade700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        }).toList(),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+              
+              // 인식 정보 카드
+              Card(
+                elevation: 2,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.camera_alt,
+                            color: Colors.grey.shade600,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          const Text(
+                            '인식 정보',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black87,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      
+                      // 클래스 인덱스
+                      Row(
+                        children: [
+                          const Text(
+                            '클래스 ID: ',
+                            style: TextStyle(
+                              fontSize: 15,
+                              color: Colors.grey,
+                            ),
+                          ),
+                          Text(
+                            '${bestDetection.classId}',
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w500,
+                              fontFamily: 'monospace',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              
+              const SizedBox(height: 24),
+              
+              // 액션 버튼들
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        _showDetailSearchDialog(context, bestDetection.className);
+                      },
+                      icon: const Icon(Icons.search, size: 20),
+                      label: const Text(
+                        '상세 정보 검색',
+                        style: TextStyle(fontSize: 16),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blue,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(context);
+                      },
+                      icon: const Icon(Icons.camera_alt, size: 20),
+                      label: const Text(
+                        '다시 촬영',
+                        style: TextStyle(fontSize: 16),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              
+              const SizedBox(height: 16),
+              
+              // 주의사항
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.orange.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange.shade200),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.info_outline,
+                      color: Colors.orange.shade700,
+                      size: 24,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'YOLO 객체 인식 결과는 참고용입니다. 정확한 정보는 전문가와 상담하세요.',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.orange.shade800,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showDetailSearchDialog(BuildContext context, String className) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('상세 정보 검색'),
+        content: Text('${className}의 상세 정보를 검색하시겠습니까?\n\n(향후 LLM 연동 예정)'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('상세 정보 검색 기능은 개발 중입니다.'),
+                ),
+              );
+            },
+            child: const Text('검색'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// 기존 알약 정보 화면 (PillClassificationResult용 - 호환성 유지)
 class PillInfoScreen extends StatelessWidget {
-  final PillClassificationResult pillResult;
+  final YOLODetection pillResult; // 타입 변경: PillClassificationResult → YOLODetection
   final DateTime scanTime;
 
   const PillInfoScreen({
@@ -689,7 +1156,7 @@ class PillInfoScreen extends StatelessWidget {
                             ),
                           ),
                           Text(
-                            '${pillResult.classIndex}',
+                            '${pillResult.classId}',
                             style: const TextStyle(
                               fontSize: 15,
                               fontWeight: FontWeight.w500,
