@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'barcode_scanner_screen.dart';
+import 'ai_chat_screen.dart'; // AiChatScreen을 import 합니다.
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -34,9 +35,9 @@ class HomeScreen extends StatelessWidget {
                   },
                 ),
               ),
-              
+
               const SizedBox(height: 40),
-              
+
               // 제목
               const Text(
                 '내가 꺼내는 약정보',
@@ -46,9 +47,9 @@ class HomeScreen extends StatelessWidget {
                   color: Colors.blue,
                 ),
               ),
-              
+
               const SizedBox(height: 60),
-              
+
               // 카메라로 검색 버튼
               SizedBox(
                 width: double.infinity,
@@ -58,7 +59,7 @@ class HomeScreen extends StatelessWidget {
                     Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (context) => const BarcodeScannerScreen(),
+                        builder: (context) => BarcodeScannerScreen(),
                       ),
                     );
                   },
@@ -82,18 +83,22 @@ class HomeScreen extends StatelessWidget {
                   ),
                 ),
               ),
-              
+
               const SizedBox(height: 20),
-              
+
               // 생성형 AI에게 질문 버튼
               SizedBox(
                 width: double.infinity,
                 height: 60,
                 child: ElevatedButton.icon(
+                  // /// [수정] onPressed 로직을 AiChatScreen으로 이동하도록 변경
                   onPressed: () {
-                    // AI 질문 페이지로 이동
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('AI 질문 기능 준비 중입니다')),
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        // drugInfo 파라미터 없이 AiChatScreen을 호출합니다.
+                        builder: (context) => const AiChatScreen(),
+                      ),
                     );
                   },
                   icon: const Icon(
@@ -116,9 +121,9 @@ class HomeScreen extends StatelessWidget {
                   ),
                 ),
               ),
-              
+
               const SizedBox(height: 20),
-              
+
               // 복약 기록 관리 버튼
               SizedBox(
                 width: double.infinity,

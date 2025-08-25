@@ -230,13 +230,13 @@ class CameraManager {
   String? _currentWidgetId;
   
   // 성능 최적화 설정 - 저사양 기기 대응
-  static const int _barcodeDetectionInterval = 800;  // 0.8초
+  static const int _barcodeDetectionInterval = 500;  // 0.8초
   static const int _yoloDetectionInterval = 3000;    // 3초 (성능 고려)
   static const int _barcodeSkipDuration = 5000;      // 5초간 같은 바코드 스킵
   static const int _navigationCooldown = 3000;       // 화면 전환 후 3초 쿨다운
   
   // YOLO 설정 - 모델 학습 크기 유지 (필수!)
-  static const double _confidenceThreshold = 0.85;    // 임계값 
+  static const double _confidenceThreshold = 0.80;    // 임계값 
   static const double _iouThreshold = 0.4;           // NMS IoU 임계값
   static const int _inputSize = 768;                 // 모델 학습 크기 그대로 유지
   
@@ -295,7 +295,7 @@ class CameraManager {
     // 성능 최적화된 카메라 설정
     _cameraController = CameraController(
       backCamera,
-      ResolutionPreset.medium,  // medium 
+      ResolutionPreset.high,  // medium 
       enableAudio: false,
       imageFormatGroup: ImageFormatGroup.nv21, // Android: NV21, iOS: YUV420 자동 선택
     );
