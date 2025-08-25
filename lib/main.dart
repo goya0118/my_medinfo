@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'config/env_config.dart';
 import 'screens/home_screen.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 // main 함수: 앱이 시작될 때 가장 먼저 실행되는 함수예요
 // async는 이 함수가 비동기로 동작한다는 뜻이에요 (데이터를 기다리는 동안 다른 일을 할 수 있어요)
@@ -44,6 +45,17 @@ class MedicineBarcodeScannerApp extends StatelessWidget {
         primarySwatch: Colors.blue, // 앱의 주요 색상을 파란색으로 설정해요
         useMaterial3: true, // Material Design 3 버전을 사용한다는 뜻이에요
       ),
+      // 한국어 지원 설정
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [
+        Locale('ko', 'KR'), // 한국어
+        Locale('en', 'US'), // 영어
+      ],
+      locale: const Locale('ko', 'KR'), // 기본 언어를 한국어로 설정
       home: const HomeScreen(), // 앱이 시작될 때 보여줄 첫 번째 화면이에요
       debugShowCheckedModeBanner: false, // 개발 모드일 때 오른쪽 위에 표시되는 배너를 숨겨요
     );

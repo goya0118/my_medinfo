@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'barcode_scanner_screen.dart';
-import 'ai_chat_screen.dart';
+import 'ai_chat_screen.dart'; // AiChatScreen을 import 합니다.
+import 'medication_record_screen.dart';
 
 /// 상단 타이틀 바 (AppBar 대체용)
 class TitleHeader extends StatelessWidget implements PreferredSizeWidget {
@@ -155,8 +156,14 @@ class HomeScreen extends StatelessWidget {
               textColor: const Color(0xFF5B32F4),
               strokeColor: const Color(0xFF5B32F4),
               onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('복약 기록 관리 기능은 준비 중입니다.')),
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const MedicationRecordScreen(),
+                  ),
+                  // ScaffoldMessenger.of(context).showSnackBar(
+                  //   const SnackBar(content: Text('복약 기록 관리 기능은 준비 중입니다.')),
+                  // );
                 );
               },
             ),
