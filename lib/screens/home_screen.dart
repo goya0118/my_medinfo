@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'barcode_scanner_screen.dart';
 import 'ai_chat_screen.dart'; // AiChatScreen을 import 합니다.
+import 'medication_record_screen.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -130,16 +131,15 @@ class HomeScreen extends StatelessWidget {
                 height: 60,
                 child: ElevatedButton.icon(
                   onPressed: () {
-                    // 임시 메시지 표시
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('복약 기록 관리 기능은 준비 중입니다.'),
-                        backgroundColor: Colors.blue,
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const MedicationRecordScreen(),
                       ),
                     );
                   },
                   icon: const Icon(
-                    Icons.history,
+                    Icons.book,
                     size: 28,
                   ),
                   label: const Text(
