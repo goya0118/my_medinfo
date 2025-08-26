@@ -6,14 +6,20 @@ import 'medication_record_screen.dart';
 
 /// 상단 타이틀 바 (AppBar 대체용)
 class TitleHeader extends StatelessWidget implements PreferredSizeWidget {
-  final String title;
+  final Widget title; // <--- String → Widget
   final String? leadingSvg;
   final Widget? leading;
   final double height;
 
   const TitleHeader({
     super.key,
-    this.title = '내꺼약',
+    this.title = const Text('내꺼약',
+      style: TextStyle(
+        color: Color(0xFF5B32F4),
+        fontSize: 32,
+        fontWeight: FontWeight.w700,
+      ),
+    ),
     this.leadingSvg,              // 예: 'assets/images/bi.svg'
     this.leading,
     this.height = 100,               // AppBar 높이
@@ -56,18 +62,7 @@ class TitleHeader extends StatelessWidget implements PreferredSizeWidget {
               
               // 타이틀
               Expanded(
-                child: Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF5B32F4),
-                    fontSize: 32,
-                    fontWeight: FontWeight.w700,
-                    height: 1.2,
-                    letterSpacing: 0.4,
-                  ),
-                ),
+                child: title, // <--- 변경된 부분
               ),
             ],
           ),
@@ -87,7 +82,14 @@ class HomeScreen extends StatelessWidget {
       backgroundColor: Colors.white,        // 배경 흰색 고정
       resizeToAvoidBottomInset: false,      // 키보드로 인한 위아래 이동 방지
       appBar: const TitleHeader(
-        title: '내꺼약',
+        title: Text(
+          '내꺼약',
+          style: TextStyle(
+            color: Color(0xFF5B32F4),
+            fontSize: 32,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
         leadingSvg: 'assets/images/bi.svg',
       ),
       body: Padding(
@@ -106,7 +108,7 @@ class HomeScreen extends StatelessWidget {
             ),
             const SizedBox(height: 20),
 
-            _buildButton(
+            buildButton(
               context,
               label: '카메라로 검색',
               icon: SvgPicture.asset('assets/images/icon-scan.svg', width: 28, height: 28),
@@ -122,7 +124,7 @@ class HomeScreen extends StatelessWidget {
             ),
             const SizedBox(height: 20),
 
-            _buildButton(
+            buildButton(
               context,
               label: '음성으로 질문',
               icon: SvgPicture.asset('assets/images/icon-audio.svg', width: 28, height: 28),
@@ -148,7 +150,7 @@ class HomeScreen extends StatelessWidget {
             ),
             const SizedBox(height: 20),
 
-            _buildButton(
+            buildButton(
               context,
               label: '복약 기록 관리',
               icon: SvgPicture.asset('assets/images/icon-view-event.svg', width: 28, height: 28),
@@ -176,7 +178,7 @@ class HomeScreen extends StatelessWidget {
   }
 
   /// 버튼 위젯 빌더 (공통 스타일)
-  static Widget _buildButton(
+  static Widget buildButton(
     BuildContext context, {
     required String label,
     required Widget icon,             // SVG/아이콘 위젯 그대로 전달

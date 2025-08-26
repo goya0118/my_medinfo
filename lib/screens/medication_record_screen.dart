@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/medication_record.dart';
 import '../services/medication_database_helper.dart';
 import 'add_medication_record_screen.dart';
+import 'package:medinfo/screens/home_screen.dart';
 
 class MedicationRecordScreen extends StatefulWidget {
   const MedicationRecordScreen({super.key});
@@ -48,25 +49,27 @@ class _MedicationRecordScreenState extends State<MedicationRecordScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: const Row(
-          children: [
-            Icon(Icons.book, size: 24),
-            SizedBox(width: 8),
-            Text('복약기록 관리'),
-          ],
-        ),
-        backgroundColor: Colors.orange.shade100,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add),
-            onPressed: _navigateToAddRecord,
+      backgroundColor: Colors.white,
+      appBar: TitleHeader(
+        title: Text(
+          '내꺼약',
+          style: TextStyle(
+            color: Color(0xFF5B32F4),
+            fontSize: 32,
+            fontWeight: FontWeight.w700,
           ),
-        ],
+        ),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Color(0xff5B32F4)),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        // actions: [
+        //   IconButton(
+        //     icon: const Icon(Icons.add),
+        //     onPressed: _navigateToAddRecord,
+        //   ),
+        // ],
+        // backgroundColor: Colors.orange.shade100,
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
@@ -104,18 +107,14 @@ class _MedicationRecordScreenState extends State<MedicationRecordScreen> {
             ),
           ),
           const SizedBox(height: 24),
-          ElevatedButton.icon(
+          HomeScreen.buildButton(
+            context,
+            label: '복약 기록 추가',
+            icon: const Icon(Icons.add, color: Colors.white, size: 32),
+            backgroundColor: const Color(0xFF5B32F4),
+            textColor: Colors.white,
+            strokeColor: const Color(0xFF5B32F4),
             onPressed: _navigateToAddRecord,
-            icon: const Icon(Icons.add),
-            label: const Text('복약 기록 추가'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.orange,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
           ),
         ],
       ),
@@ -125,10 +124,26 @@ class _MedicationRecordScreenState extends State<MedicationRecordScreen> {
   Widget _buildRecordsList() {
     return ListView.builder(
       padding: const EdgeInsets.all(16),
-      itemCount: _records.length,
+      itemCount: _records.length + 1,
       itemBuilder: (context, index) {
-        final record = _records[index];
-        return _buildRecordCard(record);
+        if (index < _records.length) {
+          final record = _records[index];
+          return _buildRecordCard(record);
+        } else {
+          // 마지막에 버튼 추가
+          return Padding(
+            padding: const EdgeInsets.only(top: 16),
+            child: HomeScreen.buildButton(
+              context,
+              label: '복약 기록 추가',
+              icon: const Icon(Icons.add, color: Colors.white, size: 32),
+              backgroundColor: const Color(0xFF5B32F4),
+              textColor: Colors.white,
+              strokeColor: const Color(0xFF5B32F4),
+              onPressed: _navigateToAddRecord,
+            ),
+          );
+        }
       },
     );
   }
@@ -140,6 +155,7 @@ class _MedicationRecordScreenState extends State<MedicationRecordScreen> {
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
       ),
+      color: const Color(0xFFF6F6FA), // 연보라색 배경 예시
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -152,24 +168,25 @@ class _MedicationRecordScreenState extends State<MedicationRecordScreen> {
                   child: Text(
                     record.medicationName,
                     style: const TextStyle(
-                      fontSize: 18,
+                      fontSize: 20,
                       fontWeight: FontWeight.bold,
-                      color: Colors.black87,
+                      fontFamily: 'Pretendard',
+                      color: Color(0xFF2B2B2B),
                     ),
                   ),
                 ),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
-                    color: Colors.orange.shade100,
+                    color: const Color(0xfff0e7ff),
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Text(
                     '${record.quantity}개',
                     style: TextStyle(
-                      fontSize: 14,
+                      fontSize: 18,
                       fontWeight: FontWeight.w600,
-                      color: Colors.orange.shade700,
+                      color: Colors.deepPurpleAccent.shade700,
                     ),
                   ),
                 ),

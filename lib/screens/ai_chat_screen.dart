@@ -298,7 +298,36 @@ class _AiChatScreenState extends State<AiChatScreen> {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: TitleHeader(
-        title: appBarTitle,
+        title: widget.drugInfo != null
+            ? RichText(
+                text: TextSpan(
+                  children: [
+                    const TextSpan(
+                      text: 'AI 상담: ',
+                      style: TextStyle(
+                        color: Color(0xFF5B32F4),
+                        fontSize: 32,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    TextSpan(
+                      text: widget.drugInfo!.itemName,
+                      style: const TextStyle(
+                        color: Color(0xFF5B32F4),
+                        fontSize: 20, // 원하는 작은 크기
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            : const Text('AI 상담',
+                style: TextStyle(
+                  color: Color(0xFF5B32F4),
+                  fontSize: 32,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Color(0xff5B32F4)),
           onPressed: () => Navigator.of(context).pop(),
