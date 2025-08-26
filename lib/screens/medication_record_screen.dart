@@ -52,7 +52,7 @@ class _MedicationRecordScreenState extends State<MedicationRecordScreen> {
       backgroundColor: Colors.white,
       appBar: TitleHeader(
         title: Text(
-          '내꺼약',
+          '복약 기록 관리',
           style: TextStyle(
             color: Color(0xFF5B32F4),
             fontSize: 32,
