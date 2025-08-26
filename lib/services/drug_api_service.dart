@@ -94,6 +94,37 @@ class DrugApiService {
       return null;
     }
   }
+
+  // ✅ YOLO 클래스 이름으로 의약품 정보 검색
+  static Future<DrugInfo?> getDrugInfoByName(String yoloClassName) async {
+    try {
+      print('YOLO 클래스 이름으로 검색: $yoloClassName');
+      
+      // YOLO 클래스 이름을 실제 의약품 이름으로 변환
+      final drugName = _convertYoloClassToName(yoloClassName);
+      print('변환된 의약품 이름: $drugName');
+      
+      if (drugName.isEmpty) {
+        print('알 수 없는 YOLO 클래스: $yoloClassName');
+        return null;
+      }
+      
+      // ✅ API 검색 없이 바로 DrugInfo 객체 생성
+      return DrugInfo(
+        itemName: drugName,  // 매핑된 텍스트 그대로 사용
+        company: '분류 모델 인식',
+        barcode: 'YOLO:$yoloClassName',
+        queriedAt: DateTime.now(),
+        atcCode: yoloClassName.split('_')[0], // M01AE51 부분 추출
+        engName: yoloClassName.split('_')[1], // Easy, Tylenol 부분 추출
+      );
+      
+    } catch (e) {
+      print('YOLO 클래스명 검색 오류: $e');
+      return null;
+    }
+  }
+
   static Future<Map<String, dynamic>?> getDrugDetailJson(String barcode) async {
     print("상세 정보 API 호출 시작 (가상): $barcode");
 
@@ -410,5 +441,15 @@ class DrugApiService {
       print('데이터 추출 오류: $e');
       return null;
     }
+  }
+  // ✅ YOLO 클래스명을 실제 의약품명으로 변환
+  static String _convertYoloClassToName(String yoloClassName) {
+    final classToNameMap = {
+      'M01AE51_Easy': '이지엔6이브연질캡슐',
+      'N02BE01_Tylenol': '타이레놀정500밀리그람(아세트아미노펜)',
+      // 필요한 만큼 추가
+    };
+    
+    return classToNameMap[yoloClassName] ?? '알 수 없는 약물: $yoloClassName';
   }
 }

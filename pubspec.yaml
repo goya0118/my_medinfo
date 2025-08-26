@@ -63,6 +63,8 @@ dependencies:
   # tflite: ^1.1.2  
   tflite_flutter: ^0.11.0
   uuid: ^4.4.0
+  image: ^4.0.17
+
   # flutter_pytorch: ^1.0.1
 
 dev_dependencies:
@@ -76,6 +78,7 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.13.1
 
   flutter_svg: ^2.0.10
 
@@ -131,3 +134,5 @@ flutter:
     - assets/models/model_info.json
     - assets/models/labels.txt
     - lib/widgets/drug_info_jsonfiles/
+    - assets/models/class_names.txt
+    - assets/models/best.tflite
