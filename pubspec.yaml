@@ -124,6 +124,7 @@ flutter:
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
 
+  
 
   # 앱 아이콘
   assets:
@@ -136,3 +137,9 @@ flutter:
     - lib/widgets/drug_info_jsonfiles/
     - assets/models/class_names.txt
     - assets/models/best.tflite
+
+flutter_icons:
+    android: true
+    ios: true
+    image_path: "assets/images/bi.png"
+    min_sdk_android: 21

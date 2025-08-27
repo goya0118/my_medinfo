@@ -7,7 +7,9 @@ import 'dart:collection';
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:image/image.dart' as img;
-import 'package:flutter/foundation.dart'; // compute를 위해 추가
+import 'package:flutter/foundation.dart';
+import 'dart:io';
+import 'package:flutter/services.dart';
 
 // ================================================================================
 // 데이터 클래스들 (먼저 정의)
@@ -230,13 +232,13 @@ class CameraManager {
   String? _currentWidgetId;
   
   // 성능 최적화 설정 - 저사양 기기 대응
-  static const int _barcodeDetectionInterval = 500;  // 0.8초
-  static const int _yoloDetectionInterval = 3000;    // 3초 (성능 고려)
+  static const int _barcodeDetectionInterval = 300;  // 0.8초
+  static const int _yoloDetectionInterval = 2000;    // 3초 (성능 고려)
   static const int _barcodeSkipDuration = 5000;      // 5초간 같은 바코드 스킵
   static const int _navigationCooldown = 3000;       // 화면 전환 후 3초 쿨다운
   
   // YOLO 설정 - 모델 학습 크기 유지 (필수!)
-  static const double _confidenceThreshold = 0.80;    // 임계값 
+  static const double _confidenceThreshold = 0.75;    // 임계값 
   static const double _iouThreshold = 0.4;           // NMS IoU 임계값
   static const int _inputSize = 768;                 // 모델 학습 크기 그대로 유지
   
@@ -297,7 +299,7 @@ class CameraManager {
       backCamera,
       ResolutionPreset.high,  // medium 
       enableAudio: false,
-      imageFormatGroup: ImageFormatGroup.nv21, // Android: NV21, iOS: YUV420 자동 선택
+      imageFormatGroup: Platform.isIOS ? null : ImageFormatGroup.nv21, 
     );
     
     await _cameraController!.initialize();
@@ -814,17 +816,32 @@ class CameraManager {
       }
       
       // 간단한 방법으로 InputImage 생성 (첫 번째 plane만 사용)
-      if (cameraImage.planes.isNotEmpty) {
+      if (Platform.isIOS) {
+        // iOS: YUV420 포맷 처리
         return InputImage.fromBytes(
-          bytes: cameraImage.planes[0].bytes,
+          bytes: _concatenateYUVPlanes(cameraImage.planes),
           metadata: InputImageMetadata(
             size: Size(cameraImage.width.toDouble(), cameraImage.height.toDouble()),
             rotation: rotation,
-            format: InputImageFormat.nv21, // Android 기본
+            format: InputImageFormat.bgra8888, // iOS 기본
             bytesPerRow: cameraImage.planes[0].bytesPerRow,
           ),
         );
+      } else {
+        // Android: NV21 포맷 처리
+        if (cameraImage.planes.isNotEmpty) {
+          return InputImage.fromBytes(
+            bytes: cameraImage.planes[0].bytes,
+            metadata: InputImageMetadata(
+              size: Size(cameraImage.width.toDouble(), cameraImage.height.toDouble()),
+              rotation: rotation,
+              format: InputImageFormat.nv21,
+              bytesPerRow: cameraImage.planes[0].bytesPerRow,
+            ),
+          );
+        }
       }
+    
       
       print('❌ CameraImage planes가 비어있음');
       return null;
@@ -832,7 +849,28 @@ class CameraManager {
     } catch (e) {
       print('❌ InputImage 생성 실패: $e');
       return null;
+      try {
+        return InputImage.fromBytes(
+          bytes: cameraImage.planes.first.bytes,
+          metadata: InputImageMetadata(
+            size: Size(cameraImage.width.toDouble(), cameraImage.height.toDouble()),
+            rotation: InputImageRotation.rotation0deg,
+            format: Platform.isIOS ? InputImageFormat.bgra8888 : InputImageFormat.nv21,
+            bytesPerRow: cameraImage.planes.first.bytesPerRow,
+          ),
+        );
+      } catch (e2) {
+        print('❌ 폴백 InputImage 생성도 실패: $e2');
+        return null;
+      }
     }
+  }
+  Uint8List _concatenateYUVPlanes(List<Plane> planes) {
+    final writeBuffer = WriteBuffer();
+    for (final plane in planes) {
+      writeBuffer.putUint8List(plane.bytes);
+    }
+    return writeBuffer.done().buffer.asUint8List();
   }
 
   /// 비동기 YOLO 인식 (전처리 + 추론 분리)
