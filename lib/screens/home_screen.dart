@@ -189,7 +189,7 @@ class HomeScreen extends StatelessWidget {
   }) {
     final button = Container(
       width: 358,
-      height: 120,
+      height: 80,
       padding: const EdgeInsets.symmetric(vertical: 16),
       clipBehavior: Clip.antiAlias,
       decoration: ShapeDecoration(

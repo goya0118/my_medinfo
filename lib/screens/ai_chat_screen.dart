@@ -3,16 +3,13 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'dart:async';
 import 'dart:convert';
-// [수정] 'package.http'를 'package:http'로 변경
-import 'package:http/http.dart' as http;
-import 'package:medinfo/screens/home_screen.dart';
+import 'package:http/http.dart' as http; // ✅ 수정: 'package.http' -> 'package:http'
 import 'package:uuid/uuid.dart';
 import '../models/drug_info.dart';
+import '../services/medication_database_helper.dart';
 import 'package:speech_to_text/speech_to_text.dart';
+import 'package:medinfo/screens/home_screen.dart';
 
-// (이하 코드는 이전과 동일)
-
-// 채팅 메시지를 표현하는 간단한 클래스
 class ChatMessage {
   final String text;
   final bool isUser;
@@ -31,13 +28,14 @@ class _AiChatScreenState extends State<AiChatScreen> {
   final TextEditingController _textController = TextEditingController();
   final List<ChatMessage> _messages = [];
   final ScrollController _scrollController = ScrollController();
-  bool _isLoading = false;
-
+  final MedicationDatabaseHelper _dbHelper = MedicationDatabaseHelper();
   final SpeechToText _speechToText = SpeechToText();
+  final String _sessionId = const Uuid().v4();
+
+  bool _isLoading = false;
+  String _loadingMessage = "AI가 답변을 생각 중입니다...";
   bool _speechEnabled = false;
   bool _isListening = false;
-
-  final String _sessionId = const Uuid().v4();
 
   @override
   void initState() {
@@ -46,8 +44,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
     _generateInitialMessage();
   }
 
-  void _generateInitialMessage() async {
-    // 1. 약물 정보가 있는 경우 (바코드 스캔)
+  Future<void> _generateInitialMessage() async {
     if (widget.drugInfo != null) {
       try {
         final atcCode = widget.drugInfo!.atcCode;
@@ -67,52 +64,32 @@ class _AiChatScreenState extends State<AiChatScreen> {
         final jsonString = await rootBundle.loadString(assetPath);
         final jsonData = json.decode(jsonString);
 
-        final productName = jsonData['product_name'] ?? widget.drugInfo!.itemName;
+        final productName =
+            jsonData['product_name'] ?? widget.drugInfo!.itemName;
         final summary = jsonData['summary'];
         final efficacy = summary['efficacy'] ?? '정보 없음';
         final dosage = summary['dosage'] ?? '정보 없음';
 
         const delay = Duration(milliseconds: 800);
 
-        _addMessage(
-          "안녕하세요! 검색하신 약물은 ${productName}입니다.",
-          isUser: false,
-        );
+        _addMessage("안녕하세요! 검색하신 약물은 ${productName}입니다.", isUser: false);
         await Future.delayed(delay);
-        _addMessage(
-          efficacy,
-          isUser: false,
-        );
+        _addMessage(efficacy, isUser: false);
         await Future.delayed(delay);
-        _addMessage(
-          dosage,
-          isUser: false,
-        );
+        _addMessage(dosage, isUser: false);
         await Future.delayed(delay);
-        _addMessage(
-          "해당 약에 대해 더 궁금하신 내용이 있으신가요?",
-          isUser: false,
-        );
+        _addMessage("해당 약에 대해 더 궁금하신 내용이 있으신가요?", isUser: false);
       } catch (e) {
         print('초기 메시지 생성 오류 (파일 없음): $e');
         const delay = Duration(milliseconds: 800);
-        _addMessage(
-          "안녕하세요! 검색된 약물은 ${widget.drugInfo!.itemName}입니다.",
-          isUser: false,
-        );
+        _addMessage("안녕하세요! 검색된 약물은 ${widget.drugInfo!.itemName}입니다.",
+            isUser: false);
         await Future.delayed(delay);
-        _addMessage(
-          "죄송하지만 아직 해당 약물에 대한 상세 정보가 준비되지 않아 안내해 드리기 어렵습니다.",
-          isUser: false,
-        );
+        _addMessage("죄송하지만 아직 해당 약물에 대한 상세 정보가 준비되지 않아 안내해 드리기 어렵습니다.",
+            isUser: false);
       }
-    }
-    // 2. 약물 정보가 없는 경우 (메인 화면에서 진입)
-    else {
-      _addMessage(
-        "안녕하세요! 의약품에 대해 궁금한 점을 무엇이든 물어보세요.",
-        isUser: false,
-      );
+    } else {
+      _addMessage("안녕하세요! 의약품에 대해 궁금한 점을 무엇이든 물어보세요.", isUser: false);
     }
   }
 
@@ -168,77 +145,94 @@ class _AiChatScreenState extends State<AiChatScreen> {
         const Duration(milliseconds: 100), () => _scrollController.jumpTo(0));
   }
 
-  void _handleSubmitted(String text) async {
-    _textController.clear();
-    if (text.trim().isEmpty) return;
-
-    _addMessage(text, isUser: true);
+  Future<void> _handleSubmitted(String text, {bool isSecondRequest = false}) async {
+    if (!isSecondRequest) {
+      _textController.clear();
+      if (text.trim().isEmpty) return;
+      _addMessage(text, isUser: true);
+    }
 
     setState(() {
       _isLoading = true;
+      if (!isSecondRequest) {
+        _loadingMessage = "AI가 답변을 생각 중입니다...";
+      }
     });
 
-    const apiUrl =
-        'https://kjyfi4w1u5.execute-api.ap-northeast-2.amazonaws.com/say-1-3team-final-prod1/say-1-3team-final-BedrockChatApi';
+    const apiUrl = 'https://kjyfi4w1u5.execute-api.ap-northeast-2.amazonaws.com/say-1-3team-final-prod1/say-1-3team-final-BedrockChatApi';
+    
+    String completionData = ''; 
 
     try {
-      // ✅ 수정: 앱에서 프롬프트를 제거하고, 서버로 보낼 데이터를 구성합니다.
-      final Map<String, String> requestBody = {
+      final Map<String, dynamic> requestBody = {
         'prompt': text,
         'sessionId': _sessionId,
       };
-
-      // 만약 특정 약물 정보가 있다면, 'drugName'을 추가로 보냅니다.
       if (widget.drugInfo != null) {
         requestBody['drugName'] = widget.drugInfo!.itemName;
+      }
+      if (isSecondRequest) {
+        requestBody['isFollowUp'] = true;
       }
 
       final response = await http
           .post(
             Uri.parse(apiUrl),
             headers: {'Content-Type': 'application/json'},
-            body: json.encode(requestBody), // ✅ 수정된 requestBody를 전송
+            body: json.encode(requestBody),
           )
           .timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200) {
         final responseBody = json.decode(utf8.decode(response.bodyBytes));
-        String content = '죄송합니다. 답변을 이해할 수 없습니다.';
-        // ... (이하 응답 처리 로직은 동일)
+        completionData = responseBody[0] as String;
+
         try {
-          if (responseBody is Map && responseBody.containsKey('completion')) {
-            content = responseBody['completion'];
-          } else if (responseBody is List &&
-              responseBody.isNotEmpty &&
-              responseBody[0] is Map &&
-              responseBody[0].containsKey('completion')) {
-            content = responseBody[0]['completion'];
-          } else if (responseBody is List &&
-              responseBody.isNotEmpty &&
-              responseBody[0] is String) {
-            content = responseBody[0];
-          } else {
-            content = '예상치 못한 답변 형식입니다: $responseBody';
+          final actionData = json.decode(completionData);
+          if (actionData['action'] == 'CHECK_MEDICATION_RECORD') {
+            await _handleCheckRecordAction();
+            return;
           }
         } catch (e) {
-          content = '답변 처리 중 오류가 발생했습니다: $e';
+          _addMessage(completionData, isUser: false);
         }
-        _addMessage(content, isUser: false);
       } else {
         final errorBody = utf8.decode(response.bodyBytes);
-        _addMessage(
-            '오류가 발생했습니다. (상태 코드: ${response.statusCode})\n응답: $errorBody',
-            isUser: false);
+        _addMessage('오류가 발생했습니다. (상태 코드: ${response.statusCode})\n응답: $errorBody', isUser: false);
       }
     } catch (e) {
       _addMessage('API 호출 중 오류가 발생했습니다: $e', isUser: false);
     } finally {
       if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
+        if (!completionData.contains('CHECK_MEDICATION_RECORD')) {
+           setState(() {
+             _isLoading = false;
+           });
+        }
       }
     }
+  }
+
+  Future<void> _handleCheckRecordAction() async {
+    _addMessage("복약기록을 확인하여 상호작용이 있는지 살펴볼게요.", isUser: false);
+
+    setState(() {
+      _isLoading = true;
+      _loadingMessage = "복약기록을 확인하는 중입니다...";
+    });
+
+    final records = await _dbHelper.getAllMedicationRecords();
+    final recordNames = records.map((r) => r.medicationName).join(', ');
+
+    if (recordNames.isEmpty) {
+      _addMessage("저장된 복약기록이 없습니다. 확인이 필요하시면 복약기록을 먼저 추가해주세요.", isUser: false);
+      setState(() => _isLoading = false);
+      return;
+    }
+
+    final secondPrompt = "현재 제 복약기록에는 '${recordNames}'이(가) 있습니다. 지금 보고 있는 약인 '${widget.drugInfo!.itemName}'과(와) 함께 복용해도 괜찮은지 확인해주세요.";
+
+    _handleSubmitted(secondPrompt, isSecondRequest: true);
   }
 
   @override
@@ -307,7 +301,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
                       height: 20,
                       child: CircularProgressIndicator(strokeWidth: 2)),
                   const SizedBox(width: 12),
-                  Text("AI가 답변을 생각 중입니다...",
+                  Text(_loadingMessage,
                       style: TextStyle(color: Colors.grey[600])),
                 ],
               ),
@@ -347,7 +341,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
               ),
               child: SelectableText(
                 message.text,
-                style: TextStyle(color: fg, fontSize: 20, height: 1.2),
+                style: TextStyle(color: fg, fontSize: 16, height: 1.2),
               ),
             ),
           ),
@@ -402,11 +396,11 @@ class _AiChatScreenState extends State<AiChatScreen> {
                         hintText: '질문을 입력하거나 마이크를 누르세요',
                         hintStyle: TextStyle(
                           color: Color(0xFF999999),
-                          fontSize: 20,
+                          fontSize: 16,
                           height: 1.2
                         ),
                       ),
-                      style: const TextStyle(fontSize: 20),
+                      style: const TextStyle(fontSize: 16),
                     ),
                   ),
                   IconButton(
