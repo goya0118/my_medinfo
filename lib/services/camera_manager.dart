@@ -232,8 +232,8 @@ class CameraManager {
   String? _currentWidgetId;
   
   // 성능 최적화 설정 - 저사양 기기 대응
-  static const int _barcodeDetectionInterval = 300;  // 0.8초
-  static const int _yoloDetectionInterval = 2000;    // 3초 (성능 고려)
+  static const int _barcodeDetectionInterval = 400;  // 0.4초
+  static const int _yoloDetectionInterval = 2500;    // 2.5초 (성능 고려)
   static const int _barcodeSkipDuration = 5000;      // 5초간 같은 바코드 스킵
   static const int _navigationCooldown = 3000;       // 화면 전환 후 3초 쿨다운
   
@@ -867,6 +867,15 @@ class CameraManager {
   }
   Uint8List _concatenateYUVPlanes(List<Plane> planes) {
     final writeBuffer = WriteBuffer();
+    
+    if (Platform.isIOS) {
+      // iOS: BGRA 순서 확인
+      print('🍎 iOS 이미지 플레인 정보:');
+      for (int i = 0; i < planes.length; i++) {
+        print('  - Plane $i: ${planes[i].bytes.length} bytes');
+      }
+    }
+    
     for (final plane in planes) {
       writeBuffer.putUint8List(plane.bytes);
     }
@@ -1023,6 +1032,12 @@ class CameraManager {
       final int numFeatures = outputs[0].length;
       final int numClasses = numFeatures - 4;
       
+      print('🔍 [${Platform.isIOS ? "iOS" : "Android"}] 후처리 정보:');
+      print('  - 출력 개수: ${outputs.length}');
+      print('  - 특징 수: $numFeatures');
+      print('  - 클래스 수: $numClasses');
+      print('  - 신뢰도 임계값: $_confidenceThreshold');
+
       if (numClasses <= 0) return detections;
       
       final int actualNumClasses = math.min(numClasses, _classNames?.length ?? numClasses);
@@ -1186,7 +1201,7 @@ class CameraManager {
     try {
       // 먼저 HapticFeedback 시도
       await HapticFeedback.heavyImpact();
-      await Future.delayed(Duration(milliseconds: 100));
+      await Future.delayed(Duration(milliseconds: 300));
       await HapticFeedback.heavyImpact();
       print('✅ HapticFeedback 성공 진동 완료');
     } catch (e) {
