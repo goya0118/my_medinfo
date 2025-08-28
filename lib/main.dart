@@ -56,7 +56,7 @@ class MedicineBarcodeScannerApp extends StatelessWidget {
         Locale('en', 'US'), // 영어
       ],
       locale: const Locale('ko', 'KR'), // 기본 언어를 한국어로 설정
-      home: const HomeScreen(), // 앱이 시작될 때 보여줄 첫 번째 화면이에요
+      home: const RootShell(), // 앱이 시작될 때 보여줄 첫 번째 화면이에요
       debugShowCheckedModeBanner: false, // 개발 모드일 때 오른쪽 위에 표시되는 배너를 숨겨요
     );
   }

@@ -7,6 +7,7 @@ import '../services/drug_api_service.dart';
 import '../models/drug_info.dart';
 import '../services/camera_manager.dart';
 import 'ai_chat_screen.dart'; // 바코드와 YOLO 객체 인식 모두 AI Chat으로 이동
+import 'package:medinfo/screens/home_screen.dart';
 
 class BarcodeScannerScreen extends StatefulWidget {
   const BarcodeScannerScreen({super.key});
@@ -322,20 +323,42 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('의약품 스캐너'),
-        backgroundColor: Colors.blue.shade100,
+      appBar: TitleHeader(
+        title: const Text(
+          '의약품 스캐너',
+          style: TextStyle(
+            color: Color(0xFF5B32F4),
+            fontSize: 30,
+            fontFamily: 'Pretendard',
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Color(0xff5B32F4)),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
         actions: [
           IconButton(
-            onPressed: _toggleFlash,
-            icon: const Icon(Icons.flash_on),
-          ),
-          IconButton(
             onPressed: _restartCamera,
-            icon: const Icon(Icons.refresh),
+            icon: const Icon(Icons.refresh, color: Color(0xff5B32F4), size: 28),
+            splashRadius: 24,
           ),
         ],
       ),
+      // appBar: AppBar(
+      //   title: const Text('의약품 스캐너'),
+      //   backgroundColor: Colors.blue.shade100,
+      //   actions: [
+      //     IconButton(
+      //       onPressed: _toggleFlash,
+      //       icon: const Icon(Icons.flash_on),
+      //     ),
+      //     IconButton(
+      //       onPressed: _restartCamera,
+      //       icon: const Icon(Icons.refresh),
+      //     ),
+      //   ],
+      // ),
       body: SafeArea(
         child: Stack(
           children: [

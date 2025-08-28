@@ -3,26 +3,31 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'barcode_scanner_screen.dart';
 import 'ai_chat_screen.dart'; // AiChatScreen을 import 합니다.
 import 'medication_record_screen.dart';
+import 'add_medication_record_screen.dart';
 
 /// 상단 타이틀 바 (AppBar 대체용)
 class TitleHeader extends StatelessWidget implements PreferredSizeWidget {
-  final Widget title; // <--- String → Widget
+  final Widget title;              // String → Widget
   final String? leadingSvg;
   final Widget? leading;
+  final List<Widget>? actions;     // ← actions 지원
   final double height;
 
   const TitleHeader({
     super.key,
-    this.title = const Text('내꺼약',
+    this.title = const Text(
+      '내꺼약',
       style: TextStyle(
         color: Color(0xFF5B32F4),
         fontSize: 32,
+        fontFamily: 'Pretendard',
         fontWeight: FontWeight.w700,
       ),
     ),
-    this.leadingSvg,              // 예: 'assets/images/bi.svg'
+    this.leadingSvg,
     this.leading,
-    this.height = 100,               // AppBar 높이
+    this.actions,
+    this.height = 90,
   });
 
   @override
@@ -46,24 +51,47 @@ class TitleHeader extends StatelessWidget implements PreferredSizeWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              // 1) leading 위젯이 있으면 그걸 사용 (예: 뒤로가기 버튼)
+              // leading: IconButton이면 그대로 배치 (패딩/제약 직접 설정 권장)
               if (leading != null) ...[
-                SizedBox(width: 37, height: 37, child: Center(child: leading)),
+                // IconButton 기본 48x48이라 padding/constraints 줄이면 더 깔끔
+                ConstrainedBox(
+                  constraints: const BoxConstraints.tightFor(width: 44, height: 44),
+                  child: IconButton(
+                    // 사용자가 준 leading이 IconButton이 아닐 수도 있으니 처리
+                    icon: leading is IconButton
+                        ? (leading as IconButton).icon
+                        : leading!,
+                    onPressed: leading is IconButton
+                        ? (leading as IconButton).onPressed
+                        : null,
+                    padding: EdgeInsets.zero,
+                    iconSize: 30,
+                    splashRadius: 24,
+                    color: const Color(0xff5B32F4),
+                  ),
+                ),
                 const SizedBox(width: 8),
-              ]
-              // 2) 없으면 SVG 사용
-              else if (leadingSvg != null) ...[
+              ] else if (leadingSvg != null) ...[
                 SizedBox(
                   width: 37, height: 37,
                   child: SvgPicture.asset(leadingSvg!),
                 ),
                 const SizedBox(width: 8),
               ],
-              
-              // 타이틀
+
+              // Title (왼쪽 정렬 유지)
               Expanded(
-                child: title, // <--- 변경된 부분
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: title,
+                ),
               ),
+
+              // actions 렌더링
+              if (actions != null && actions!.isNotEmpty) ...[
+                const SizedBox(width: 8),
+                Row(mainAxisSize: MainAxisSize.min, children: actions!),
+              ],
             ],
           ),
         ),
@@ -81,16 +109,27 @@ class HomeScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: Colors.white,        // 배경 흰색 고정
       resizeToAvoidBottomInset: false,      // 키보드로 인한 위아래 이동 방지
-      appBar: const TitleHeader(
+      appBar: TitleHeader(
         title: Text(
           '내꺼약',
           style: TextStyle(
             color: Color(0xFF5B32F4),
-            fontSize: 32,
+            fontSize: 30,
             fontWeight: FontWeight.w700,
           ),
         ),
         leadingSvg: 'assets/images/bi.svg',
+        actions: [
+          IconButton(
+            icon: SvgPicture.asset('assets/images/icon-alarm-on.svg', width: 30, height: 30),
+            // icon: const Icon(Icons.alarm_on, color: Color(0xff5B32F4)),
+            onPressed: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('알림 기능 준비 중입니다')),
+              );
+            },
+          ),
+        ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(20.0),
@@ -100,9 +139,9 @@ class HomeScreen extends StatelessWidget {
             const Text(
               '안녕하세요 김조흔님',
               style: TextStyle(
-                fontSize: 32,
+                fontSize: 28,
                 fontFamily: 'Pretendard',
-                fontWeight: FontWeight.bold,
+                fontWeight: FontWeight.w600,
                 color: Color(0xFF2B2B2B),
               ),
             ),
@@ -170,7 +209,41 @@ class HomeScreen extends StatelessWidget {
               },
             ),
 
+            const SizedBox(height: 20),
+
+            buildButton(
+              context,
+              label: '복약 기록 추가',
+              icon: SvgPicture.asset('assets/images/icon-add-event.svg', width: 28, height: 28),
+              backgroundColor: Colors.white,
+              textColor: const Color(0xFF5B32F4),
+              strokeColor: const Color(0xFF5B32F4),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const AddMedicationRecordScreen(),
+                  ),
+                );
+              },
+            ),
+
+
             const Spacer(),                 // 남는 공간은 하단으로 밀어 고정감 유지
+
+            const Padding(
+              padding: EdgeInsets.only(left: 10, right: 10),
+              child: Text(
+                "* 내꺼약은 공신력 있는 기관의 자료를 바탕으로 일반적인 복용 정보를 제공 합니다만, 최종 복용 결정은 반드시 의사·약사와 상담하세요.",
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w400,
+                  color: Color(0xFF828282),
+                  fontFamily: 'Pretendard',
+                  height: 1.0,
+                ),
+              ),
+            )
           ],
         ),
       ),
@@ -189,7 +262,7 @@ class HomeScreen extends StatelessWidget {
   }) {
     final button = Container(
       width: 358,
-      height: 80,
+      height: 90,
       padding: const EdgeInsets.symmetric(vertical: 16),
       clipBehavior: Clip.antiAlias,
       decoration: ShapeDecoration(
@@ -204,10 +277,10 @@ class HomeScreen extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // 아이콘 영역 50x50
+          // 아이콘 영역 34x34
           SizedBox(
-            width: 50,
-            height: 50,
+            width: 34,
+            height: 34,
             child: FittedBox(
               fit: BoxFit.contain,
               child: icon,
@@ -220,10 +293,10 @@ class HomeScreen extends StatelessWidget {
             // ↓ Figma 추출값에 맞춘 스타일 (원하시면 'Standard'로 교체 가능)
             style: TextStyle(
               color: textColor,
-              fontSize: 32,
-              fontFamily: 'Standard', // ← 이전 요청 반영(필요 시 'Pretendard'로 변경)
+              fontSize: 28,
+              fontFamily: 'Pretandard', // ← 이전 요청 반영(필요 시 'Pretendard'로 변경)
               fontWeight: FontWeight.bold,
-              height: 0.03,           // Figma 값 그대로 (줄간격 매우 타이트)
+              height: 0.05,           // Figma 값 그대로 (줄간격 매우 타이트)
               letterSpacing: 0.40,
             ),
           ),
@@ -276,4 +349,94 @@ class HomeScreen extends StatelessWidget {
   //     ),
   //   );
   // }
+}
+
+class RootShell extends StatefulWidget {
+  const RootShell({super.key});
+  @override
+  State<RootShell> createState() => _RootShellState();
+}
+
+class _RootShellState extends State<RootShell> {
+  int _index = 2; // 0:카메라 1:음성검색 2:홈 3:기록관리 4:기록추가
+
+  final _pages = [
+    BarcodeScannerScreen(),
+    AiChatScreen(), // 음성 질문 화면(or 마이크 진입 화면)
+    HomeScreen(),
+    MedicationRecordScreen(),
+    AddMedicationRecordScreen(), // 신규 추가 화면이 있다면
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: _pages[_index],
+      // 바텀바를 감싸서 그림자/높이/배경을 Figma처럼
+      bottomNavigationBar: Container(
+        height: 100,
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          boxShadow: [
+            BoxShadow(
+              color: Color(0x3F000000), // #00000063 근사
+              blurRadius: 4,
+              offset: Offset(0, -2),
+            ),
+          ],
+        ),
+        child: SafeArea(
+          top: false,
+          child: BottomNavigationBar(
+            currentIndex: _index,
+            onTap: (i) => setState(() => _index = i),
+            backgroundColor: Colors.white,
+            elevation: 0,
+            type: BottomNavigationBarType.fixed,
+            selectedItemColor: const Color(0xFF5B32F4),
+            unselectedItemColor: const Color(0xFF828282),
+            selectedLabelStyle: const TextStyle(
+              fontSize: 12,
+              letterSpacing: 0.4,
+              // fontFamily: 'Pretendard', // 등록돼 있으면 주석 해제
+            ),
+            unselectedLabelStyle: const TextStyle(
+              fontSize: 12,
+              letterSpacing: 0.4,
+            ),
+            // 아이콘 사이 간격/패딩을 키워 Figma 느낌 살리기
+            selectedIconTheme: const IconThemeData(size: 32),
+            unselectedIconTheme: const IconThemeData(size: 32),
+            items: [
+              BottomNavigationBarItem(
+                icon: SvgPicture.asset('assets/images/icon-scan-disable.svg'),
+                activeIcon: SvgPicture.asset('assets/images/icon-scan-active.svg'),
+                label: '카메라',
+              ),
+              BottomNavigationBarItem(
+                icon: SvgPicture.asset('assets/images/icon-audio-disable.svg'),
+                activeIcon: SvgPicture.asset('assets/images/icon-audio-active.svg'),
+                label: '음성검색',
+              ),
+              BottomNavigationBarItem(
+                icon: SvgPicture.asset('assets/images/icon-home-disable.svg'),
+                activeIcon: SvgPicture.asset('assets/images/icon-home-active.svg'),
+                label: '홈',
+              ),
+              BottomNavigationBarItem(
+                icon: SvgPicture.asset('assets/images/icon-view-event-disable.svg'),
+                activeIcon: SvgPicture.asset('assets/images/icon-view-event-active.svg'),
+                label: '기록관리',
+              ),
+              BottomNavigationBarItem(
+                icon: SvgPicture.asset('assets/images/icon-add-event-disable.svg'),
+                activeIcon: SvgPicture.asset('assets/images/icon-add-event-active.svg'),
+                label: '기록추가',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

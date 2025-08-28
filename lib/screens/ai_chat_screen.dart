@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter_svg/flutter_svg.dart';
 import 'dart:async';
 import 'dart:convert';
 // [수정] 'package.http'를 'package:http'로 변경
@@ -39,11 +40,16 @@ class _AiChatScreenState extends State<AiChatScreen> {
 
   final String _sessionId = const Uuid().v4();
 
+  final FocusNode _composerFocusNode = FocusNode();
+
   @override
   void initState() {
     super.initState();
     _initSpeech();
     _generateInitialMessage();
+
+    _textController.addListener(_onComposerChanged);  // 입력 내용 변경 감지
+    _composerFocusNode.addListener(() => setState(() {})); // 포커스 변경 감지
   }
 
   void _generateInitialMessage() async {
@@ -241,10 +247,21 @@ class _AiChatScreenState extends State<AiChatScreen> {
     }
   }
 
+  void _onComposerChanged() {
+    setState(() {}); // 텍스트가 바뀌면 버튼 토글을 위해 리빌드
+  }
+
+  @override
+  void dispose() {
+    _composerFocusNode.dispose();
+    // _textController.dispose(); // 다른 곳에서 안 쓰면 같이 정리 권장
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final appBarTitle = widget.drugInfo != null
-        ? 'AI 상담: ${widget.drugInfo!.itemName}'
+        ? 'AI 상담 ${widget.drugInfo!.itemName}'
         : 'AI 상담';
 
     return Scaffold(
@@ -258,7 +275,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
                       text: 'AI 상담: ',
                       style: TextStyle(
                         color: Color(0xFF5B32F4),
-                        fontSize: 32,
+                        fontSize: 30,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -279,11 +296,22 @@ class _AiChatScreenState extends State<AiChatScreen> {
                   fontSize: 32,
                   fontWeight: FontWeight.w700,
                 ),
-              ),
+        ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Color(0xff5B32F4)),
           onPressed: () => Navigator.of(context).pop(),
         ),
+        actions: [
+          IconButton(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const HomeScreen()),
+              );
+            },
+            icon: SvgPicture.asset('assets/images/icon-home-disable.svg'),
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -347,7 +375,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
               ),
               child: SelectableText(
                 message.text,
-                style: TextStyle(color: fg, fontSize: 20, height: 1.2),
+                style: TextStyle(color: fg, fontSize: 18, height: 1.1),
               ),
             ),
           ),
@@ -360,25 +388,28 @@ class _AiChatScreenState extends State<AiChatScreen> {
     const radius = 8.0;
     const borderColor = Color(0xFF8E8E93);
 
+    // 토글 조건: 입력창에 포커스가 있거나, 텍스트가 1자 이상이면 ‘보내기’ 표시
+    final bool hasText = _textController.text.trim().isNotEmpty;
+    final bool showSend = _composerFocusNode.hasFocus || hasText;
+
     return Material(
-      // 둥근 사각형 테두리를 “밖쪽”으로 그립니다.
-      shape: RoundedRectangleBorder(
-        borderRadius: const BorderRadius.only(
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.only(
           topLeft: Radius.circular(radius),
           topRight: Radius.circular(radius),
         ),
-        side: const BorderSide(
+        side: BorderSide(
           color: borderColor,
           width: 1,
-          // ↓ Flutter 버전에 따라 지원. 에러 나면 이 줄만 지우세요.
-          strokeAlign: BorderSide.strokeAlignOutside,
+          // strokeAlign은 버전에 따라 에러날 수 있으니 필요하면 주석 처리
+          // strokeAlign: BorderSide.strokeAlignOutside,
         ),
       ),
       color: Colors.transparent,
       child: Stack(
         clipBehavior: Clip.none,
         children: [
-          // 본체: 배경/패딩
+          // 본체
           Container(
             decoration: const BoxDecoration(
               color: Color(0xFFF7F7FA),
@@ -395,6 +426,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
                   Expanded(
                     child: TextField(
                       controller: _textController,
+                      focusNode: _composerFocusNode, // ← 포커스 연결
                       minLines: 1,
                       maxLines: 4,
                       onSubmitted: _isLoading ? null : _handleSubmitted,
@@ -402,33 +434,57 @@ class _AiChatScreenState extends State<AiChatScreen> {
                         hintText: '질문을 입력하거나 마이크를 누르세요',
                         hintStyle: TextStyle(
                           color: Color(0xFF999999),
-                          fontSize: 20,
-                          height: 1.2
+                          fontSize: 18,
+                          height: 1.1,
                         ),
                       ),
-                      style: const TextStyle(fontSize: 20),
+                      style: const TextStyle(fontSize: 18),
                     ),
                   ),
-                  IconButton(
-                    icon: Icon(_isListening ? Icons.stop_circle_outlined : Icons.mic),
-                    color: _isListening ? Colors.redAccent : Color(0xff5B32F4),
-                    onPressed: _handleMicButtonPressed,
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.send),
-                    color: Color(0xff5B32F4),
-                    onPressed: _isLoading ? null : () => _handleSubmitted(_textController.text),
+
+                  // === 오른쪽 버튼 한 자리에서 스위칭 ===
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 180),
+                    transitionBuilder: (child, anim) =>
+                        FadeTransition(opacity: anim, child: child),
+                    child: showSend
+                        ? IconButton(
+                            key: const ValueKey('send'),
+                            icon: const Icon(Icons.send),
+                            iconSize: 24,
+                            color: const Color(0xff5B32F4),
+                            onPressed: _isLoading
+                                ? null
+                                : () => _handleSubmitted(_textController.text),
+                          )
+                        : IconButton(
+                            key: const ValueKey('mic'),
+                            icon: Icon(
+                              _isListening
+                                  ? Icons.stop_circle_outlined
+                                  : Icons.mic,
+                            ),
+                            iconSize: 24,
+                            color: _isListening
+                                ? Colors.redAccent
+                                : const Color(0xff5B32F4),
+                            onPressed: _isLoading || !_speechEnabled
+                                ? null
+                                : _handleMicButtonPressed,
+                          ),
                   ),
                 ],
               ),
             ),
           ),
 
-          // 아랫변 가리개: 같은 배경색으로 살짝 덮어 “상/좌/우만 보더”
+          // 아래 테두리 가리개(상/좌/우만 보더 느낌)
           Positioned(
-            left: -2, right: -2, bottom: -2, height: 4,
+            left: -2,
+            right: -2,
+            bottom: -2,
+            height: 4,
             child: Container(
-              // 화면 배경색(스크린 배경이 흰색이면 Colors.white 써도 됩니다)
               color: Theme.of(context).scaffoldBackgroundColor,
             ),
           ),
