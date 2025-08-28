@@ -211,39 +211,39 @@ class HomeScreen extends StatelessWidget {
 
             const SizedBox(height: 20),
 
-            buildButton(
-              context,
-              label: '복약 기록 추가',
-              icon: SvgPicture.asset('assets/images/icon-add-event.svg', width: 28, height: 28),
-              backgroundColor: Colors.white,
-              textColor: const Color(0xFF5B32F4),
-              strokeColor: const Color(0xFF5B32F4),
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const AddMedicationRecordScreen(),
-                  ),
-                );
-              },
-            ),
+            // buildButton(
+            //   context,
+            //   label: '복약 기록 추가',
+            //   icon: SvgPicture.asset('assets/images/icon-add-event.svg', width: 28, height: 28),
+            //   backgroundColor: Colors.white,
+            //   textColor: const Color(0xFF5B32F4),
+            //   strokeColor: const Color(0xFF5B32F4),
+            //   onPressed: () {
+            //     Navigator.push(
+            //       context,
+            //       MaterialPageRoute(
+            //         builder: (context) => const AddMedicationRecordScreen(),
+            //       ),
+            //     );
+            //   },
+            // ),
 
 
             const Spacer(),                 // 남는 공간은 하단으로 밀어 고정감 유지
 
-            const Padding(
-              padding: EdgeInsets.only(left: 10, right: 10),
-              child: Text(
-                "* 내꺼약은 공신력 있는 기관의 자료를 바탕으로 일반적인 복용 정보를 제공 합니다만, 최종 복용 결정은 반드시 의사·약사와 상담하세요.",
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w400,
-                  color: Color(0xFF828282),
-                  fontFamily: 'Pretendard',
-                  height: 1.0,
-                ),
-              ),
-            )
+            // const Padding(
+            //   padding: EdgeInsets.only(left: 10, right: 10),
+            //   child: Text(
+            //     "* 내꺼약은 공신력 있는 기관의 자료를 바탕으로 일반적인 복용 정보를 제공 합니다만, 최종 복용 결정은 반드시 의사·약사와 상담하세요.",
+            //     style: TextStyle(
+            //       fontSize: 13,
+            //       fontWeight: FontWeight.w400,
+            //       color: Color(0xFF828282),
+            //       fontFamily: 'Pretendard',
+            //       height: 1.0,
+            //     ),
+            //   ),
+            // )
           ],
         ),
       ),
@@ -374,7 +374,7 @@ class _RootShellState extends State<RootShell> {
       body: _pages[_index],
       // 바텀바를 감싸서 그림자/높이/배경을 Figma처럼
       bottomNavigationBar: Container(
-        height: 100,
+        height: 120,
         decoration: const BoxDecoration(
           color: Colors.white,
           boxShadow: [
