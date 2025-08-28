@@ -4,14 +4,12 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_svg/flutter_svg.dart';
 import 'dart:async';
 import 'dart:convert';
-// [수정] 'package.http'를 'package:http'로 변경
 import 'package:http/http.dart' as http;
 import 'package:medinfo/screens/home_screen.dart';
 import 'package:uuid/uuid.dart';
 import '../models/drug_info.dart';
+import '../services/medication_database_helper.dart'; // ✅ 새로 추가
 import 'package:speech_to_text/speech_to_text.dart';
-
-// (이하 코드는 이전과 동일)
 
 // 채팅 메시지를 표현하는 간단한 클래스
 class ChatMessage {
@@ -32,7 +30,9 @@ class _AiChatScreenState extends State<AiChatScreen> {
   final TextEditingController _textController = TextEditingController();
   final List<ChatMessage> _messages = [];
   final ScrollController _scrollController = ScrollController();
+  final MedicationDatabaseHelper _dbHelper = MedicationDatabaseHelper(); // ✅ 새로 추가
   bool _isLoading = false;
+  String _loadingMessage = "AI가 답변을 생각 중입니다..."; // ✅ 동적 로딩 메시지
 
   final SpeechToText _speechToText = SpeechToText();
   bool _speechEnabled = false;
@@ -48,8 +48,8 @@ class _AiChatScreenState extends State<AiChatScreen> {
     _initSpeech();
     _generateInitialMessage();
 
-    _textController.addListener(_onComposerChanged);  // 입력 내용 변경 감지
-    _composerFocusNode.addListener(() => setState(() {})); // 포커스 변경 감지
+    _textController.addListener(_onComposerChanged);
+    _composerFocusNode.addListener(() => setState(() {}));
   }
 
   void _generateInitialMessage() async {
@@ -174,22 +174,28 @@ class _AiChatScreenState extends State<AiChatScreen> {
         const Duration(milliseconds: 100), () => _scrollController.jumpTo(0));
   }
 
-  void _handleSubmitted(String text) async {
-    _textController.clear();
-    if (text.trim().isEmpty) return;
-
-    _addMessage(text, isUser: true);
+  // ✅ 복약기록 확인 기능 추가
+  Future<void> _handleSubmitted(String text, {bool isSecondRequest = false}) async {
+    if (!isSecondRequest) {
+      _textController.clear();
+      if (text.trim().isEmpty) return;
+      _addMessage(text, isUser: true);
+    }
 
     setState(() {
       _isLoading = true;
+      if (!isSecondRequest) {
+        _loadingMessage = "AI가 답변을 생각 중입니다...";
+      }
     });
 
     const apiUrl =
         'https://kjyfi4w1u5.execute-api.ap-northeast-2.amazonaws.com/say-1-3team-final-prod1/say-1-3team-final-BedrockChatApi';
 
+    String completionData = '';
+
     try {
-      // ✅ 수정: 앱에서 프롬프트를 제거하고, 서버로 보낼 데이터를 구성합니다.
-      final Map<String, String> requestBody = {
+      final Map<String, dynamic> requestBody = {
         'prompt': text,
         'sessionId': _sessionId,
       };
@@ -199,36 +205,57 @@ class _AiChatScreenState extends State<AiChatScreen> {
         requestBody['drugName'] = widget.drugInfo!.itemName;
       }
 
+      // ✅ 추가: 두 번째 요청인지 표시
+      if (isSecondRequest) {
+        requestBody['isFollowUp'] = true;
+      }
+
       final response = await http
           .post(
             Uri.parse(apiUrl),
             headers: {'Content-Type': 'application/json'},
-            body: json.encode(requestBody), // ✅ 수정된 requestBody를 전송
+            body: json.encode(requestBody),
           )
           .timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200) {
         final responseBody = json.decode(utf8.decode(response.bodyBytes));
         String content = '죄송합니다. 답변을 이해할 수 없습니다.';
-        // ... (이하 응답 처리 로직은 동일)
+
+        // ✅ 수정: completionData 추출
         try {
           if (responseBody is Map && responseBody.containsKey('completion')) {
-            content = responseBody['completion'];
+            completionData = responseBody['completion'];
           } else if (responseBody is List &&
               responseBody.isNotEmpty &&
               responseBody[0] is Map &&
               responseBody[0].containsKey('completion')) {
-            content = responseBody[0]['completion'];
+            completionData = responseBody[0]['completion'];
           } else if (responseBody is List &&
               responseBody.isNotEmpty &&
               responseBody[0] is String) {
-            content = responseBody[0];
+            completionData = responseBody[0] as String;
           } else {
-            content = '예상치 못한 답변 형식입니다: $responseBody';
+            completionData = '예상치 못한 답변 형식입니다: $responseBody';
           }
+
+          // ✅ 새로 추가: 복약기록 확인 액션 처리
+          try {
+            final actionData = json.decode(completionData);
+            if (actionData['action'] == 'CHECK_MEDICATION_RECORD') {
+              await _handleCheckRecordAction();
+              return;
+            }
+          } catch (e) {
+            // JSON이 아니면 일반 텍스트로 처리
+            content = completionData;
+          }
+
+          content = completionData;
         } catch (e) {
           content = '답변 처리 중 오류가 발생했습니다: $e';
         }
+
         _addMessage(content, isUser: false);
       } else {
         final errorBody = utf8.decode(response.bodyBytes);
@@ -240,21 +267,46 @@ class _AiChatScreenState extends State<AiChatScreen> {
       _addMessage('API 호출 중 오류가 발생했습니다: $e', isUser: false);
     } finally {
       if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
+        // ✅ 복약기록 확인 중이 아닐 때만 로딩 해제
+        if (!completionData.contains('CHECK_MEDICATION_RECORD')) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
       }
     }
   }
 
+  // ✅ 새로 추가: 복약기록 확인 액션 처리
+  Future<void> _handleCheckRecordAction() async {
+    _addMessage("복약기록을 확인하여 상호작용이 있는지 살펴볼게요.", isUser: false);
+
+    setState(() {
+      _isLoading = true;
+      _loadingMessage = "복약기록을 확인하는 중입니다...";
+    });
+
+    final records = await _dbHelper.getAllMedicationRecords();
+    final recordNames = records.map((r) => r.medicationName).join(', ');
+
+    if (recordNames.isEmpty) {
+      _addMessage("저장된 복약기록이 없습니다. 확인이 필요하시면 복약기록을 먼저 추가해주세요.", isUser: false);
+      setState(() => _isLoading = false);
+      return;
+    }
+
+    final secondPrompt = "현재 제 복약기록에는 '${recordNames}'이(가) 있습니다. 지금 보고 있는 약인 '${widget.drugInfo!.itemName}'과(와) 함께 복용해도 괜찮은지 확인해주세요.";
+
+    _handleSubmitted(secondPrompt, isSecondRequest: true);
+  }
+
   void _onComposerChanged() {
-    setState(() {}); // 텍스트가 바뀌면 버튼 토글을 위해 리빌드
+    setState(() {});
   }
 
   @override
   void dispose() {
     _composerFocusNode.dispose();
-    // _textController.dispose(); // 다른 곳에서 안 쓰면 같이 정리 권장
     super.dispose();
   }
 
@@ -283,7 +335,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
                       text: widget.drugInfo!.itemName,
                       style: const TextStyle(
                         color: Color(0xFF5B32F4),
-                        fontSize: 20, // 원하는 작은 크기
+                        fontSize: 20,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -335,7 +387,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
                       height: 20,
                       child: CircularProgressIndicator(strokeWidth: 2)),
                   const SizedBox(width: 12),
-                  Text("AI가 답변을 생각 중입니다...",
+                  Text(_loadingMessage, // ✅ 동적 로딩 메시지 사용
                       style: TextStyle(color: Colors.grey[600])),
                 ],
               ),
@@ -388,7 +440,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
     const radius = 8.0;
     const borderColor = Color(0xFF8E8E93);
 
-    // 토글 조건: 입력창에 포커스가 있거나, 텍스트가 1자 이상이면 ‘보내기’ 표시
+    // 토글 조건: 입력창에 포커스가 있거나, 텍스트가 1자 이상이면 '보내기' 표시
     final bool hasText = _textController.text.trim().isNotEmpty;
     final bool showSend = _composerFocusNode.hasFocus || hasText;
 
@@ -401,8 +453,6 @@ class _AiChatScreenState extends State<AiChatScreen> {
         side: BorderSide(
           color: borderColor,
           width: 1,
-          // strokeAlign은 버전에 따라 에러날 수 있으니 필요하면 주석 처리
-          // strokeAlign: BorderSide.strokeAlignOutside,
         ),
       ),
       color: Colors.transparent,
@@ -426,7 +476,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
                   Expanded(
                     child: TextField(
                       controller: _textController,
-                      focusNode: _composerFocusNode, // ← 포커스 연결
+                      focusNode: _composerFocusNode,
                       minLines: 1,
                       maxLines: 4,
                       onSubmitted: _isLoading ? null : _handleSubmitted,
