@@ -327,7 +327,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
                       text: 'AI 상담: ',
                       style: TextStyle(
                         color: Color(0xFF5B32F4),
-                        fontSize: 30,
+                        fontSize: 24,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -335,7 +335,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
                       text: widget.drugInfo!.itemName,
                       style: const TextStyle(
                         color: Color(0xFF5B32F4),
-                        fontSize: 20,
+                        fontSize: 16,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
