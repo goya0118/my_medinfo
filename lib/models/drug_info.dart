@@ -5,6 +5,7 @@ class DrugInfo {
   final DateTime queriedAt;
   final String? atcCode; // ✅ nullable 타입 유지
   final String? engName;   // ✅ 영문 이름 추가
+  final Map<String, dynamic>? rawApiData; // ✅ API 응답 원본을 담을 필드 추가
 
   DrugInfo({
     required this.itemName,
@@ -13,6 +14,7 @@ class DrugInfo {
     required this.queriedAt,
     this.atcCode,
     this.engName,
+    this.rawApiData, // ✅ 생성자에 추가
 
   });
 

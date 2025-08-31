@@ -351,6 +351,7 @@ class DrugApiService {
       queriedAt: DateTime.now(),
       atcCode: atcCode, // ✅ 누락된 부분 추가
       engName: engName, // ✅ 추가
+      rawApiData: item, // ✅ API로부터 받은 item JSON 전체를 그대로 전달
     );
   }
 
