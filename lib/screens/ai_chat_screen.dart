@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -41,7 +42,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
   final String _sessionId = const Uuid().v4();
   final FocusNode _composerFocusNode = FocusNode();
 
-  // ✅ API 원본 JSON 데이터를 저장할 상태 변수
+  // API 원본 JSON 데이터를 저장할 상태 변수
   Map<String, dynamic>? _rawApiData;
 
   @override
@@ -49,7 +50,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
     super.initState();
     _initSpeech();
 
-    // ✅ 위젯이 생성될 때 drugInfo에 포함된 rawApiData를 상태 변수에 저장
+    // 위젯이 생성될 때 drugInfo에 포함된 rawApiData를 상태 변수에 저장
     if (widget.drugInfo?.rawApiData != null) {
       _rawApiData = widget.drugInfo!.rawApiData;
     }
@@ -60,7 +61,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
     _composerFocusNode.addListener(() => setState(() {}));
   }
 
-  // 초기 메시지 생성 (기존 로직과 동일)
+  // 초기 메시지 생성
   void _generateInitialMessage() async {
     if (widget.drugInfo != null) {
       try {
@@ -105,7 +106,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
     }
   }
 
-  // Bedrock으로 첫 요약 요청 (기존 로직과 동일)
+  // Bedrock으로 첫 요약 요청
   Future<void> _summarizeWithBedrock(Map<String, dynamic> apiData) async {
     setState(() {
       _isLoading = true;
@@ -120,7 +121,9 @@ class _AiChatScreenState extends State<AiChatScreen> {
     [JSON 데이터]
     ${json.encode(apiData)}
     """;
-    const apiUrl = 'https://kjyfi4w1u5.execute-api.ap-northeast-2.amazonaws.com/say-1-3team-final-prod1/say-1-3team-final-BedrockChatApi';
+    
+    // ✅ .env 파일에서 API URL 불러오기
+    final apiUrl = dotenv.env['API_GATEWAY_URL']!;
 
     try {
       final response = await http.post(
@@ -159,8 +162,9 @@ class _AiChatScreenState extends State<AiChatScreen> {
       _isLoading = true;
       if (!isSecondRequest) { _loadingMessage = "AI가 답변을 생각 중입니다..."; }
     });
-
-    const apiUrl = 'https://kjyfi4w1u5.execute-api.ap-northeast-2.amazonaws.com/say-1-3team-final-prod1/say-1-3team-final-BedrockChatApi';
+    
+    // ✅ .env 파일에서 API URL 불러오기
+    final apiUrl = dotenv.env['API_GATEWAY_URL']!;
     String completionData = '';
 
     try {
@@ -173,7 +177,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
         requestBody['drugName'] = widget.drugInfo!.itemName;
       }
       
-      // ✅ API 원본 데이터가 있다면 'fullApiContext' 키로 함께 전송
+      // API 원본 데이터가 있다면 'fullApiContext' 키로 함께 전송
       if (_rawApiData != null) {
         requestBody['fullApiContext'] = _rawApiData;
       }
